@@ -8,18 +8,11 @@ yarn-debug.log*
 yarn-error.log*
 .bak
 *.bak
-.env
-.env.local
-.env.*.local
-.env.production
-.env.development
-.env.test
 .cache/
 .next/
 .vercel/
 activecore-db/dist/
 activecore-db/node_modules/
-activecore-db/.env
 *.backup.*
 
 # Local meal import source files (keep out of git)
