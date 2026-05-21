@@ -76,6 +76,57 @@ const PH_COMMON_DIETS: Array<{ value: string; label: string }> = [
   { value: 'vegetarian', label: '🥬 Vegetarian' },
 ];
 
+const HEALTH_CONDITIONS: Array<{ value: string; label: string }> = [
+  { value: 'hypertension', label: 'Hypertension' },
+  { value: 'diabetes', label: 'Diabetes' },
+  { value: 'obesity_overweight', label: 'Obesity / Overweight' },
+  { value: 'dyslipidemia_cardiovascular', label: 'Dyslipidemia / Cardiovascular' },
+  { value: 'chronic_kidney_disease', label: 'Chronic Kidney Disease' },
+
+];
+
+const CULTURAL_CONTEXTS: Array<{ value: string; label: string }> = [
+  { value: 'filipino', label: 'Filipino' },
+  { value: 'filipino_budget', label: 'Filipino budget/local foods' },
+  { value: 'mixed_asian', label: 'Mixed Asian' },
+  { value: 'western', label: 'Western-influenced' },
+];
+
+const RELIGIOUS_RESTRICTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'None' },
+  { value: 'halal', label: 'Halal / no pork' },
+  { value: 'no_pork', label: 'No pork' },
+  { value: 'no_beef', label: 'No beef' },
+  { value: 'vegetarian', label: 'Vegetarian' },
+];
+
+const FOOD_PREFERENCES: Array<{ value: string; label: string }> = [
+  { value: 'home_cooked', label: 'Home-cooked' },
+  { value: 'budget_friendly', label: 'Budget-friendly' },
+  { value: 'high_fiber', label: 'High fiber' },
+  { value: 'low_sodium', label: 'Low sodium' },
+  { value: 'no_fried_foods', label: 'Avoid fried foods' },
+  { value: 'vegetable_forward', label: 'Vegetable-forward' },
+];
+
+const SOCIOECONOMIC_LEVELS: Array<{ value: string; label: string }> = [
+  { value: 'low', label: 'Low budget' },
+  { value: 'middle', label: 'Moderate budget' },
+  { value: 'high', label: 'Flexible budget' },
+];
+
+const SMOKING_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'none', label: 'Non-smoker' },
+  { value: 'former', label: 'Former smoker' },
+  { value: 'current', label: 'Current smoker' },
+];
+
+const ALCOHOL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'none', label: 'No alcohol' },
+  { value: 'occasional', label: 'Occasional' },
+  { value: 'frequent', label: 'Frequent' },
+];
+
 const normalizeDietValue = (raw: any): string => {
   const value = String(raw || '').trim().toLowerCase();
   if (!value || value === 'none' || value === 'no_specific_diet') return '';
@@ -214,6 +265,8 @@ interface Meal {
   recipe: string;
   // AI or server-provided instructions text (optional)
   instructions?: string;
+  suitabilityNotes?: string[];
+  citationIds?: string[];
 }
 
 interface DayMeals {
@@ -244,6 +297,17 @@ interface MealPlan {
   };
   mealPrepTips: string[];
   nutritionTips: string[];
+  evidenceSummary?: string[];
+  citations?: NutritionCitation[];
+  profileSummary?: any;
+}
+
+interface NutritionCitation {
+  id: string;
+  title: string;
+  organization: string;
+  url: string;
+  summary?: string;
 }
 
 interface SavedMealPlan {
@@ -262,6 +326,21 @@ const MealPlanner: React.FC = () => {
   const [diet, setDiet] = useState<string>(""); 
   const [allergies, setAllergies] = useState<string[]>([]);
   const [calorieTarget, setCalorieTarget] = useState<number>(2000);
+  const [proteinTarget, setProteinTarget] = useState<number>(120);
+  const [carbsTarget, setCarbsTarget] = useState<number>(250);
+  const [fatsTarget, setFatsTarget] = useState<number>(65);
+  const [age, setAge] = useState<number>(30);
+  const [sex, setSex] = useState<string>("");
+  const [heightCm, setHeightCm] = useState<number>(165);
+  const [weightKg, setWeightKg] = useState<number>(65);
+  const [healthConditions, setHealthConditions] = useState<string[]>([]);
+  const [culturalContext, setCulturalContext] = useState<string>("filipino");
+  const [religiousRestriction, setReligiousRestriction] = useState<string>("");
+  const [foodPreferences, setFoodPreferences] = useState<string[]>(["home_cooked"]);
+  const [socioeconomicStatus, setSocioeconomicStatus] = useState<string>("middle");
+  const [dailyBudgetPhp, setDailyBudgetPhp] = useState<number>(250);
+  const [smokingStatus, setSmokingStatus] = useState<string>("none");
+  const [alcoholIntake, setAlcoholIntake] = useState<string>("none");
 
   // UI State
   const [loading, setLoading] = useState(false);
@@ -312,10 +391,27 @@ const MealPlanner: React.FC = () => {
       const data = await response.json();
       if (data.success && data.hasPreferences) {
         const pref = data.preferences;
-        setLifestyle(pref.lifestyle);
-        setMealType(pref.mealType);
-        setGoal(pref.goal);
+        const demographics = pref.demographics || {};
+        const dietaryPrefs = pref.dietaryRestrictions || {};
+        const socioeconomic = pref.socioeconomic || {};
+        const lifestyleFactors = pref.lifestyleFactors || {};
+
+        setLifestyle(pref.lifestyle || lifestyleFactors.physicalActivity || "moderate");
+        setMealType(pref.mealType || "balanced");
+        setGoal(pref.goal || "muscle_gain");
         setDiet(normalizeDietValue(pref.diet));
+        setAge(Number(demographics.age) || 30);
+        setSex(String(demographics.sex || ""));
+        setHeightCm(Number(demographics.heightCm) || 165);
+        setWeightKg(Number(demographics.weightKg) || 65);
+        setHealthConditions(normalizeToKnownValues(parseDelimitedSelection(pref.healthConditions || []), HEALTH_CONDITIONS));
+        setCulturalContext(String(dietaryPrefs.cultural || "filipino"));
+        setReligiousRestriction(String(dietaryPrefs.religious || ""));
+        setFoodPreferences(normalizeToKnownValues(parseDelimitedSelection(dietaryPrefs.foodPreferences || []), FOOD_PREFERENCES));
+        setSocioeconomicStatus(String(socioeconomic.status || "middle"));
+        setDailyBudgetPhp(Number(socioeconomic.dailyBudgetPhp) || 250);
+        setSmokingStatus(String(lifestyleFactors.smokingStatus || "none"));
+        setAlcoholIntake(String(lifestyleFactors.alcoholIntake || "none"));
         // Backward compatible: if older prefs stored a free-text restrictions field,
         // best-effort map it into our known allergy options.
         const prefAllergiesRaw = parseDelimitedSelection(pref.allergies || pref.dietaryRestrictions || '');
@@ -324,6 +420,12 @@ const MealPlanner: React.FC = () => {
         if (Number.isFinite(prefCalories) && prefCalories > 0) {
           setCalorieTarget(prefCalories);
         }
+        const prefProtein = Number(pref?.targets?.protein);
+        const prefCarbs = Number(pref?.targets?.carbs);
+        const prefFats = Number(pref?.targets?.fats);
+        if (Number.isFinite(prefProtein) && prefProtein > 0) setProteinTarget(prefProtein);
+        if (Number.isFinite(prefCarbs) && prefCarbs > 0) setCarbsTarget(prefCarbs);
+        if (Number.isFinite(prefFats) && prefFats > 0) setFatsTarget(prefFats);
       }
     } catch (error) {
       console.error("Error loading preferences:", error);
@@ -344,6 +446,47 @@ const MealPlanner: React.FC = () => {
       return { ok: false, message: err?.message || String(err) };
     }
   }
+
+  const boundedNumber = (value: number, fallback: number, min: number, max: number) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+  };
+
+  const buildMealPlannerPayload = () => ({
+    lifestyle,
+    mealType,
+    goal,
+    diet,
+    allergies,
+    healthConditions,
+    demographics: {
+      age: boundedNumber(age, 30, 10, 100),
+      sex,
+      heightCm: boundedNumber(heightCm, 165, 100, 240),
+      weightKg: boundedNumber(weightKg, 65, 25, 250),
+    },
+    dietaryRestrictions: {
+      cultural: culturalContext,
+      religious: religiousRestriction,
+      foodPreferences,
+    },
+    socioeconomic: {
+      status: socioeconomicStatus,
+      dailyBudgetPhp: boundedNumber(dailyBudgetPhp, 250, 50, 5000),
+    },
+    lifestyleFactors: {
+      physicalActivity: lifestyle,
+      smokingStatus,
+      alcoholIntake,
+    },
+    targets: {
+      calories: boundedNumber(calorieTarget, 2000, 800, 5000),
+      protein: boundedNumber(proteinTarget, 120, 20, 350),
+      carbs: boundedNumber(carbsTarget, 250, 20, 800),
+      fats: boundedNumber(fatsTarget, 65, 10, 250),
+    },
+  });
 
   // Example handler: adjust to your variable names and state
   const generateMealPlan = async () => {
@@ -371,16 +514,7 @@ const MealPlanner: React.FC = () => {
         return;
       }
 
-      const body = {
-        lifestyle,
-        mealType,
-        goal,
-        diet, // NEW: Add diet to the request
-        allergies,
-        targets: {
-          calories: Math.min(5000, Math.max(800, Number(calorieTarget) || 2000)),
-        },
-      };
+      const body = buildMealPlannerPayload();
 
       const resp = await fetch(`${API_URL}/meal-planner/generate`, {
         method: 'POST',
@@ -551,7 +685,7 @@ const MealPlanner: React.FC = () => {
       const body = {
         planId: currentPlanId || undefined,
         planName: planName || `${goal} - ${mealType} Plan`,
-        mealPlan: mealPlan.weekPlan || mealPlan // backend expects array of days in `mealPlan`
+        mealPlan
       };
 
       const response = await fetch(`${API_URL}/meal-planner/save`, {
@@ -663,6 +797,15 @@ const MealPlanner: React.FC = () => {
     return arr.slice(0, max);
   };
 
+  const getCitationLabel = (citationId: string) => {
+    const source = mealPlan?.citations?.find((citation) => citation.id === citationId);
+    return source?.organization || source?.title || citationId;
+  };
+
+  const getCitationById = (citationId: string) => {
+    return mealPlan?.citations?.find((citation) => citation.id === citationId) || null;
+  };
+
   const getTodayDayName = () => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     return days[new Date().getDay()];
@@ -711,6 +854,18 @@ const MealPlanner: React.FC = () => {
             </p>
           )}
           <p className="daily-meal-portion"><strong>Portion:</strong> {normalizePortionSize(mealObj.portionSize)}</p>
+          {Array.isArray(mealObj.suitabilityNotes) && mealObj.suitabilityNotes.length > 0 && (
+            <div className="meal-evidence-preview">
+              {mealObj.suitabilityNotes.slice(0, 2).map((note: string, idx: number) => (
+                <span key={idx}>{note}</span>
+              ))}
+            </div>
+          )}
+          {Array.isArray(mealObj.citationIds) && mealObj.citationIds.length > 0 && (
+            <p className="meal-source-preview">
+              Sources: {mealObj.citationIds.slice(0, 3).map(getCitationLabel).join(", ")}
+            </p>
+          )}
           <div className="daily-meal-actions">
             <IonButton size="small" fill="outline" onClick={() => {
               if (mealPlan) {
@@ -802,6 +957,8 @@ const MealPlanner: React.FC = () => {
         fats: 0,
         recipe: '',
         instructions: '',
+        suitabilityNotes: [],
+        citationIds: [],
       } as Meal;
     }
     const protein = Number(m.protein || m.prot || 0) || 0;
@@ -817,6 +974,16 @@ const MealPlanner: React.FC = () => {
       fats,
       recipe: String(m.recipe || m.instructions || ''),
       instructions: String(m.instructions || m.ai_instructions || m.recipe || ''),
+      suitabilityNotes: Array.isArray(m.suitabilityNotes)
+        ? m.suitabilityNotes.map(String).filter(Boolean)
+        : Array.isArray(m.suitability_notes)
+          ? m.suitability_notes.map(String).filter(Boolean)
+          : [],
+      citationIds: Array.isArray(m.citationIds)
+        ? m.citationIds.map(String).filter(Boolean)
+        : Array.isArray(m.citation_ids)
+          ? m.citation_ids.map(String).filter(Boolean)
+          : [],
     } as Meal;
   }
 
@@ -898,12 +1065,35 @@ const MealPlanner: React.FC = () => {
             .filter(Boolean)
         : [];
 
+    const rawEvidenceSummary = plan.evidenceSummary ?? plan.evidence_summary ?? [];
+    const evidenceSummary = Array.isArray(rawEvidenceSummary)
+      ? rawEvidenceSummary.map(String).filter(Boolean)
+      : typeof rawEvidenceSummary === 'string'
+        ? rawEvidenceSummary.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+        : [];
+
+    const rawCitations = plan.citations ?? plan.sources ?? [];
+    const citations = Array.isArray(rawCitations)
+      ? rawCitations
+          .map((source: any) => ({
+            id: String(source?.id || '').trim(),
+            title: String(source?.title || '').trim(),
+            organization: String(source?.organization || '').trim(),
+            url: String(source?.url || '').trim(),
+            summary: source?.summary ? String(source.summary) : undefined,
+          }))
+          .filter((source: NutritionCitation) => source.id && source.title && source.url)
+      : [];
+
     return {
       ...plan,
       weekPlan: normalizedWeek,
       shoppingList,
       mealPrepTips,
       nutritionTips,
+      evidenceSummary,
+      citations,
+      profileSummary: plan.profileSummary ?? plan.profile_summary ?? null,
     } as MealPlan;
   }
 
@@ -959,18 +1149,12 @@ const MealPlanner: React.FC = () => {
 
       // Payload base - include current preferences for AI context
       const baseBody = {
+        ...buildMealPlannerPayload(),
         dayIndex,
         mealType: mealKey,
         mealPlan: mealPlan.weekPlan ?? mealPlan,
         planId: currentPlanId ?? null,
-        lifestyle,
         preference: mealType,
-        goal,
-        diet,
-        allergies,
-        targets: {
-          calories: Math.min(5000, Math.max(800, Number(calorieTarget) || 2000)),
-        },
       };
 
       let json: any = null;
@@ -1140,8 +1324,59 @@ const MealPlanner: React.FC = () => {
             <IonCard className="config-card">
               <IonCardContent>
                 <h2 className="section-title">
-                  <IonIcon icon={nutrition} /> Set Your Goals
+                  <IonIcon icon={nutrition} /> Nutrition Profile
                 </h2>
+
+                <div className="form-subsection">
+                  <h3>Demographic Profile</h3>
+                  <IonGrid className="targets-grid">
+                    <IonRow>
+                      <IonCol size="6" sizeMd="3">
+                        <IonItem className="custom-item">
+                          <IonLabel position="stacked">Age</IonLabel>
+                          <IonInput
+                            type="number"
+                            value={age}
+                            onIonInput={(e) => setAge(Number(e.detail.value) || 30)}
+                            className="custom-input"
+                          />
+                        </IonItem>
+                      </IonCol>
+                      <IonCol size="6" sizeMd="3">
+                        <IonItem className="custom-item">
+                          <IonLabel position="stacked">Sex</IonLabel>
+                          <IonSelect value={sex} onIonChange={(e) => setSex(e.detail.value || "")}>
+                            <IonSelectOption value="">Prefer not to say</IonSelectOption>
+                            <IonSelectOption value="female">Female</IonSelectOption>
+                            <IonSelectOption value="male">Male</IonSelectOption>
+                          </IonSelect>
+                        </IonItem>
+                      </IonCol>
+                      <IonCol size="6" sizeMd="3">
+                        <IonItem className="custom-item">
+                          <IonLabel position="stacked">Height (cm)</IonLabel>
+                          <IonInput
+                            type="number"
+                            value={heightCm}
+                            onIonInput={(e) => setHeightCm(Number(e.detail.value) || 165)}
+                            className="custom-input"
+                          />
+                        </IonItem>
+                      </IonCol>
+                      <IonCol size="6" sizeMd="3">
+                        <IonItem className="custom-item">
+                          <IonLabel position="stacked">Weight (kg)</IonLabel>
+                          <IonInput
+                            type="number"
+                            value={weightKg}
+                            onIonInput={(e) => setWeightKg(Number(e.detail.value) || 65)}
+                            className="custom-input"
+                          />
+                        </IonItem>
+                      </IonCol>
+                    </IonRow>
+                  </IonGrid>
+                </div>
                 
                 <div className="form-group">
                   <IonItem className="custom-item">
@@ -1182,6 +1417,36 @@ const MealPlanner: React.FC = () => {
                   </IonItem>
                 </div>
 
+                <div className="form-subsection">
+                  <h3>Health Conditions</h3>
+                  <IonItem className="custom-item" lines="none">
+                    <IonLabel position="stacked">
+                      <IonIcon icon={warning} /> Conditions
+                    </IonLabel>
+                    <IonSelect
+                      multiple
+                      value={healthConditions}
+                      placeholder="Select health conditions"
+                      onIonChange={(e) => setHealthConditions((e.detail.value as string[]) || [])}
+                    >
+                      {HEALTH_CONDITIONS.map((opt) => (
+                        <IonSelectOption key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </IonSelectOption>
+                      ))}
+                    </IonSelect>
+                  </IonItem>
+                  {healthConditions.length > 0 && (
+                    <div className="restriction-chip">
+                      <IonIcon icon={checkmarkCircle} />
+                      <IonLabel>{healthConditions.length} condition filter{healthConditions.length === 1 ? '' : 's'} applied</IonLabel>
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-subsection">
+                  <h3>Dietary Restrictions</h3>
+
                 <div className="form-group">
                   <IonItem className="custom-item">
                     <IonLabel position="stacked">
@@ -1190,6 +1455,50 @@ const MealPlanner: React.FC = () => {
                     <IonSelect value={diet} onIonChange={(e) => setDiet(e.detail.value!)}>
                       {PH_COMMON_DIETS.map((opt) => (
                         <IonSelectOption key={opt.value || 'none'} value={opt.value}>
+                          {opt.label}
+                        </IonSelectOption>
+                      ))}
+                    </IonSelect>
+                  </IonItem>
+                </div>
+
+                <div className="form-group">
+                  <IonItem className="custom-item">
+                    <IonLabel position="stacked">Cultural Context</IonLabel>
+                    <IonSelect value={culturalContext} onIonChange={(e) => setCulturalContext(e.detail.value || "filipino")}>
+                      {CULTURAL_CONTEXTS.map((opt) => (
+                        <IonSelectOption key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </IonSelectOption>
+                      ))}
+                    </IonSelect>
+                  </IonItem>
+                </div>
+
+                <div className="form-group">
+                  <IonItem className="custom-item">
+                    <IonLabel position="stacked">Religious Restriction</IonLabel>
+                    <IonSelect value={religiousRestriction} onIonChange={(e) => setReligiousRestriction(e.detail.value || "")}>
+                      {RELIGIOUS_RESTRICTIONS.map((opt) => (
+                        <IonSelectOption key={opt.value || 'none'} value={opt.value}>
+                          {opt.label}
+                        </IonSelectOption>
+                      ))}
+                    </IonSelect>
+                  </IonItem>
+                </div>
+
+                <div className="form-group">
+                  <IonItem className="custom-item">
+                    <IonLabel position="stacked">Food Preferences</IonLabel>
+                    <IonSelect
+                      multiple
+                      value={foodPreferences}
+                      placeholder="Select preferences"
+                      onIonChange={(e) => setFoodPreferences((e.detail.value as string[]) || [])}
+                    >
+                      {FOOD_PREFERENCES.map((opt) => (
+                        <IonSelectOption key={opt.value} value={opt.value}>
                           {opt.label}
                         </IonSelectOption>
                       ))}
@@ -1227,6 +1536,11 @@ const MealPlanner: React.FC = () => {
                   </div>
                 )}
 
+                </div>
+
+                <div className="form-subsection targets-section">
+                  <h3>Calorie and Macronutrient Goals</h3>
+
                 <div className="form-group calorie-target-section">
                   <IonItem className="custom-item">
                     <IonLabel position="stacked">
@@ -1245,6 +1559,100 @@ const MealPlanner: React.FC = () => {
                       placeholder="2000"
                     />
                   </IonItem>
+                </div>
+
+                  <IonGrid className="targets-grid">
+                    <IonRow>
+                      <IonCol size="12" sizeMd="4">
+                        <IonItem className="custom-item">
+                          <IonLabel position="stacked">Protein (g)</IonLabel>
+                          <IonInput
+                            type="number"
+                            value={proteinTarget}
+                            onIonInput={(e) => setProteinTarget(Number(e.detail.value) || 120)}
+                            className="custom-input"
+                          />
+                        </IonItem>
+                      </IonCol>
+                      <IonCol size="12" sizeMd="4">
+                        <IonItem className="custom-item">
+                          <IonLabel position="stacked">Carbs (g)</IonLabel>
+                          <IonInput
+                            type="number"
+                            value={carbsTarget}
+                            onIonInput={(e) => setCarbsTarget(Number(e.detail.value) || 250)}
+                            className="custom-input"
+                          />
+                        </IonItem>
+                      </IonCol>
+                      <IonCol size="12" sizeMd="4">
+                        <IonItem className="custom-item">
+                          <IonLabel position="stacked">Fats (g)</IonLabel>
+                          <IonInput
+                            type="number"
+                            value={fatsTarget}
+                            onIonInput={(e) => setFatsTarget(Number(e.detail.value) || 65)}
+                            className="custom-input"
+                          />
+                        </IonItem>
+                      </IonCol>
+                    </IonRow>
+                  </IonGrid>
+                </div>
+
+                <div className="form-subsection">
+                  <h3>Socioeconomic Status and Budget</h3>
+                  <div className="form-group">
+                    <IonItem className="custom-item">
+                      <IonLabel position="stacked">Budget Level</IonLabel>
+                      <IonSelect value={socioeconomicStatus} onIonChange={(e) => setSocioeconomicStatus(e.detail.value || "middle")}>
+                        {SOCIOECONOMIC_LEVELS.map((opt) => (
+                          <IonSelectOption key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </IonSelectOption>
+                        ))}
+                      </IonSelect>
+                    </IonItem>
+                  </div>
+                  <div className="form-group">
+                    <IonItem className="custom-item">
+                      <IonLabel position="stacked">Daily Budget (PHP)</IonLabel>
+                      <IonInput
+                        type="number"
+                        value={dailyBudgetPhp}
+                        onIonInput={(e) => setDailyBudgetPhp(Number(e.detail.value) || 250)}
+                        className="custom-input"
+                      />
+                    </IonItem>
+                  </div>
+                </div>
+
+                <div className="form-subsection">
+                  <h3>Lifestyle Factors</h3>
+                  <div className="form-group">
+                    <IonItem className="custom-item">
+                      <IonLabel position="stacked">Smoking</IonLabel>
+                      <IonSelect value={smokingStatus} onIonChange={(e) => setSmokingStatus(e.detail.value || "none")}>
+                        {SMOKING_OPTIONS.map((opt) => (
+                          <IonSelectOption key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </IonSelectOption>
+                        ))}
+                      </IonSelect>
+                    </IonItem>
+                  </div>
+                  <div className="form-group">
+                    <IonItem className="custom-item">
+                      <IonLabel position="stacked">Alcohol</IonLabel>
+                      <IonSelect value={alcoholIntake} onIonChange={(e) => setAlcoholIntake(e.detail.value || "none")}>
+                        {ALCOHOL_OPTIONS.map((opt) => (
+                          <IonSelectOption key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </IonSelectOption>
+                        ))}
+                      </IonSelect>
+                    </IonItem>
+                  </div>
                 </div>
 
                 <div className="button-group">
@@ -1301,7 +1709,7 @@ const MealPlanner: React.FC = () => {
 
               <IonGrid className="action-buttons">
                 <IonRow>
-                  <IonCol size="12" sizeMd="6">
+                  <IonCol size="16" sizeMd="6">
                     <IonButton
                       expand="block"
                       className="primary-btn"
@@ -1331,6 +1739,21 @@ const MealPlanner: React.FC = () => {
                 </IonRow>
               </IonGrid>
             </div>
+
+            {Array.isArray(mealPlan.evidenceSummary) && mealPlan.evidenceSummary.length > 0 && (
+              <IonCard className="info-card evidence-card">
+                <IonCardHeader>
+                  <IonCardTitle><IonIcon icon={checkmarkCircle} /> Suitability Basis</IonCardTitle>
+                </IonCardHeader>
+                <IonCardContent>
+                  <ul className="tips-list">
+                    {mealPlan.evidenceSummary.map((note, idx) => (
+                      <li key={idx}><IonIcon icon={listCircle} className="tip-icon" /><span>{note}</span></li>
+                    ))}
+                  </ul>
+                </IonCardContent>
+              </IonCard>
+            )}
 
             {/* MODERN UI: Summary Bar + Day Selector - DISABLED */}
             {/* 
@@ -1669,6 +2092,25 @@ const MealPlanner: React.FC = () => {
                 </IonCardContent>
               </IonCard>
             )}
+
+            {mealPlan && Array.isArray(mealPlan.citations) && mealPlan.citations.length > 0 && (
+              <IonCard className="info-card citations-card">
+                <IonCardHeader>
+                  <IonCardTitle><IonIcon icon={documents} /> Sources</IonCardTitle>
+                </IonCardHeader>
+                <IonCardContent>
+                  <ul className="source-list">
+                    {mealPlan.citations.map((source) => (
+                      <li key={source.id}>
+                        <a href={source.url} target="_blank" rel="noreferrer">
+                          {source.organization}: {source.title}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </IonCardContent>
+              </IonCard>
+            )}
           </div>
         )}
 
@@ -1779,6 +2221,36 @@ const MealPlanner: React.FC = () => {
                     ))}
                   </ul>
                 </div>
+
+                {Array.isArray(selectedMeal.meal.suitabilityNotes) && selectedMeal.meal.suitabilityNotes.length > 0 && (
+                  <div className="recipe-section">
+                    <h4 className="section-heading">Suitability Notes</h4>
+                    <ul className="ingredients-list">
+                      {selectedMeal.meal.suitabilityNotes.map((note: string, idx: number) => (
+                        <li key={idx}>{note}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {Array.isArray(selectedMeal.meal.citationIds) && selectedMeal.meal.citationIds.length > 0 && (
+                  <div className="recipe-section">
+                    <h4 className="section-heading">Sources</h4>
+                    <ul className="source-list compact">
+                      {selectedMeal.meal.citationIds.map((citationId: string) => {
+                        const source = getCitationById(citationId);
+                        if (!source) return null;
+                        return (
+                          <li key={citationId}>
+                            <a href={source.url} target="_blank" rel="noreferrer">
+                              {source.organization}: {source.title}
+                            </a>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
 
                 {selectedMeal.meal.recipe && selectedMeal.meal.recipe.trim() !== '' && (
                   <div className="recipe-section">
