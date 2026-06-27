@@ -39,27 +39,39 @@ const Home: React.FC = () => {
   const handleLogin = async () => {
     if (isLoggingIn) return;
 
+    const submittedUsername = username.trim();
+    const submittedPassword = password;
+
+    if (!submittedUsername || !submittedPassword) {
+      setError('Username and password are required');
+      return;
+    }
+
+    let slowTimer: number | undefined;
+
     try {
       setError('');
       setIsLoggingIn(true);
       setLoginMessage('Logging in…');
 
-      const slowTimer = window.setTimeout(() => {
+      slowTimer = window.setTimeout(() => {
         setLoginMessage('Logging in… (this can take a moment)');
       }, 5000);
 
-      const result = await loginUser(username, password);
+      const result = await loginUser(submittedUsername, submittedPassword);
       if (result.user.role === 'admin') {
         router.push('/admin', 'root', 'replace');
       } else {
         router.push('/member', 'root', 'replace');
       }
       setShowLogin(false);
-      window.clearTimeout(slowTimer);
     } catch (error: any) {
       setError(error.message);
       console.error('Login error:', error);
     } finally {
+      if (slowTimer !== undefined) {
+        window.clearTimeout(slowTimer);
+      }
       setIsLoggingIn(false);
     }
   };
@@ -69,12 +81,6 @@ const Home: React.FC = () => {
     handleLogin();
   };
 
-  const handleLoginInputKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      handleLogin();
-    }
-  };
 
   return (
     <IonPage className="home-page">
@@ -272,8 +278,7 @@ const Home: React.FC = () => {
                 <IonInput
                   type="text"
                   value={username}
-                  onIonChange={e => setUsername(e.detail.value || '')}
-                  onKeyDown={handleLoginInputKeyDown}
+                  onIonInput={(e) => setUsername(String(e.detail.value ?? ''))}
                   placeholder="Enter your username"
                   disabled={isLoggingIn}
                 />
@@ -283,8 +288,7 @@ const Home: React.FC = () => {
                 <IonInput
                   type="password"
                   value={password}
-                  onIonChange={e => setPassword(e.detail.value || '')}
-                  onKeyDown={handleLoginInputKeyDown}
+                  onIonInput={(e) => setPassword(String(e.detail.value ?? ''))}
                   placeholder="Enter your password"
                   disabled={isLoggingIn}
                 />
