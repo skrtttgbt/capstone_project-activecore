@@ -6,9 +6,9 @@ import {
   setupIonicReact,
 } from "@ionic/react";
 import { IonReactRouter } from "@ionic/react-router";
-import { Route, Redirect } from "react-router-dom";
+import { Redirect, Route } from "react-router-dom";
 
-/* Core CSS required for Ionic components to work properly */
+/* Core Ionic CSS */
 import "@ionic/react/css/core.css";
 import "@ionic/react/css/normalize.css";
 import "@ionic/react/css/structure.css";
@@ -23,226 +23,507 @@ import "@ionic/react/css/display.css";
 /* Theme variables */
 import "./theme/variables.css";
 
-/* Import pages */
+/* Pages */
 import Home from "./pages/Home";
+
+/* Admin pages */
 import AdminDashboard from "./pages/AdminDashboard";
+import MembersManagement from "./pages/MembersManagement";
+import AdminPendingPayments from "./pages/AdminPendingPayments";
+import AdminAttendance from "./pages/AdminAttendance";
+import EquipmentManagement from "./pages/EquipmentManagement";
+import AdminPayments from "./pages/AdminPayments";
+
+/* Member pages */
 import MemberDashboard from "./pages/MemberDashboard";
 import MyAttendance from "./pages/MyAttendance";
 import Calorie from "./pages/Calorie";
 import QrAttendance from "./pages/QrAttendance";
 import ProgressTracker from "./pages/ProgressTracker";
 import MuscleGainTracker from "./pages/MuscleGainTracker";
-import MembersManagement from "./pages/MembersManagement";
 import MemberPayment from "./pages/MemberPayment";
-import AdminPendingPayments from "./pages/AdminPendingPayments";
 import MealPlanner from "./pages/MealPlanner";
-import AdminAttendance from "./pages/AdminAttendance";
-import EquipmentManagement from "./pages/EquipmentManagement";
-import AdminPayments from "./pages/AdminPayments";
+
+/* Payment pages */
 import PaymentReturn from "./pages/PaymentReturn";
 import PaymentSuccess from "./pages/PaymentSuccess";
 import PaymentFailed from "./pages/PaymentFailed";
+
+/* Shared pages */
 import AccountSettings from "./pages/AccountSettings";
 
+/* Components */
 import AppMenu from "./components/AppMenu";
 
-/* Import role-based route */
-import PrivateRoute from "./components/PrivateRoute";
+/* Services */
 import { ensureToken } from "./services/auth.service";
 
 setupIonicReact();
 
-function readAuthState() {
-  const token = localStorage.getItem('token');
-  let role: string | undefined = undefined;
-  try {
-    const raw = localStorage.getItem('user') || localStorage.getItem('currentUser');
-    if (raw) {
-      const user = JSON.parse(raw);
-      role = (user?.role ?? user?.user?.role ?? user?.data?.role) as string | undefined;
-    }
-  } catch {
-    // ignore
+type UserRole = "admin" | "member";
+
+type AuthState = {
+  isAuthed: boolean;
+  role: UserRole | "";
+};
+
+/**
+ * Extracts the actual user object from different possible
+ * API response structures.
+ */
+function getStoredUser(): any {
+  const raw =
+    localStorage.getItem("user") ||
+    localStorage.getItem("currentUser");
+
+  if (!raw) {
+    return null;
   }
-  const roleNorm = String(role || '').trim().toLowerCase();
-  const isAuthed = !!token && (roleNorm === 'admin' || roleNorm === 'member');
-  return { isAuthed, role: roleNorm };
+
+  try {
+    const parsed = JSON.parse(raw);
+
+    return parsed?.user ?? parsed?.data ?? parsed;
+  } catch (error) {
+    console.error("Unable to parse stored user:", error);
+    return null;
+  }
+}
+
+/**
+ * Converts different role formats into admin/member.
+ */
+function normalizeRole(rawRole: unknown): UserRole | "" {
+  if (!rawRole) {
+    return "";
+  }
+
+  let roleValue = rawRole;
+
+  if (typeof rawRole === "object" && rawRole !== null) {
+    roleValue =
+      (rawRole as any)?.name ??
+      (rawRole as any)?.role ??
+      "";
+  }
+
+  const normalizedRole = String(roleValue)
+    .trim()
+    .toLowerCase();
+
+  if (normalizedRole === "admin") {
+    return "admin";
+  }
+
+  if (normalizedRole === "member") {
+    return "member";
+  }
+
+  return "";
+}
+
+/**
+ * Reads authentication information directly from localStorage.
+ */
+function readAuthState(): AuthState {
+  const token =
+    localStorage.getItem("token") ||
+    localStorage.getItem("accessToken");
+
+  const user = getStoredUser();
+
+  const role = normalizeRole(
+    user?.role ??
+    user?.user_role ??
+    user?.accountRole
+  );
+
+  return {
+    isAuthed: Boolean(token && role),
+    role,
+  };
+}
+
+/**
+ * Creates a protected route renderer.
+ *
+ * This uses a normal Route inside IonRouterOutlet instead of
+ * placing a custom PrivateRoute component directly in the outlet.
+ */
+function protectedPage(
+  Component: React.ComponentType<any>,
+  requiredRole?: UserRole
+) {
+  return (routeProps: any) => {
+    const auth = readAuthState();
+
+    if (!auth.isAuthed) {
+      return <Redirect to="/home" />;
+    }
+
+    if (requiredRole && auth.role !== requiredRole) {
+      return (
+        <Redirect
+          to={auth.role === "admin" ? "/admin" : "/member"}
+        />
+      );
+    }
+
+    return <Component {...routeProps} />;
+  };
 }
 
 const App: React.FC = () => {
-  const [authState, setAuthState] = useState(readAuthState());
-  const [authInitialized, setAuthInitialized] = useState(false);
+  const [authState, setAuthState] = useState<AuthState>(
+    readAuthState()
+  );
 
+  const [authInitialized, setAuthInitialized] =
+    useState(false);
+
+  /**
+   * Updates authentication when localStorage changes
+   * from another browser tab.
+   */
   useEffect(() => {
-    const onStorage = () => setAuthState(readAuthState());
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    const handleStorageChange = () => {
+      setAuthState(readAuthState());
+    };
+
+    window.addEventListener(
+      "storage",
+      handleStorageChange
+    );
+
+    return () => {
+      window.removeEventListener(
+        "storage",
+        handleStorageChange
+      );
+    };
   }, []);
 
+  /**
+   * Updates authentication after login/logout in the
+   * current browser tab.
+   */
   useEffect(() => {
-    const onAuthChanged = () => setAuthState(readAuthState());
-    window.addEventListener('auth-changed', onAuthChanged as EventListener);
-    return () => window.removeEventListener('auth-changed', onAuthChanged as EventListener);
+    const handleAuthChanged = () => {
+      setAuthState(readAuthState());
+    };
+
+    window.addEventListener(
+      "auth-changed",
+      handleAuthChanged
+    );
+
+    return () => {
+      window.removeEventListener(
+        "auth-changed",
+        handleAuthChanged
+      );
+    };
   }, []);
 
+  /**
+   * Initialize or restore authentication token.
+   */
   useEffect(() => {
-    // Also update on initial mount in case localStorage changed before React booted
-    setAuthState(readAuthState());
-  }, []);
+    let isMounted = true;
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
+    const initializeAuthentication = async () => {
       try {
         await ensureToken();
-      } catch (err) {
-        console.warn("ensureToken failed", err);
+      } catch (error) {
+        console.warn("ensureToken failed:", error);
       } finally {
-        if (!active) return;
+        if (!isMounted) {
+          return;
+        }
+
         setAuthState(readAuthState());
         setAuthInitialized(true);
       }
-    })();
+    };
+
+    initializeAuthentication();
 
     return () => {
-      active = false;
+      isMounted = false;
     };
   }, []);
 
   if (!authInitialized) {
-    return <IonApp />;
+    return (
+      <IonApp>
+        <div
+          style={{
+            minHeight: "100vh",
+            display: "grid",
+            placeItems: "center",
+            fontFamily: "sans-serif",
+          }}
+        >
+          Loading ActiveCore...
+        </div>
+      </IonApp>
+    );
   }
 
   return (
     <IonApp>
       <IonReactRouter>
-        {/* Only show split-pane sidebar on large screens; mobile uses overlay menu */}
-        <IonSplitPane contentId="main" when={authState.isAuthed ? 'lg' : false}>
+        <IonSplitPane
+          contentId="main"
+          when={authState.isAuthed ? "lg" : false}
+        >
           <AppMenu />
+
           <IonRouterOutlet id="main">
+            {/* Public home/login route */}
             <Route
               exact
               path="/home"
-              render={() =>
-                readAuthState().isAuthed ? (
-                  <Redirect to={readAuthState().role === 'admin' ? '/admin' : '/member'} />
-                ) : (
-                  <Home />
-                )
-              }
+              render={() => {
+                const auth = readAuthState();
+
+                if (!auth.isAuthed) {
+                  return <Home />;
+                }
+
+                return (
+                  <Redirect
+                    to={
+                      auth.role === "admin"
+                        ? "/admin"
+                        : "/member"
+                    }
+                  />
+                );
+              }}
             />
 
-          {/* Protected Admin Routes */}
-          <PrivateRoute
-            exact
-            path="/admin"
-            component={AdminDashboard}
-            role="admin"
-          />
+            {/* ========================= */}
+            {/* Protected Admin Routes    */}
+            {/* ========================= */}
 
-          <PrivateRoute
-            exact
-            path="/members-management"
-            component={MembersManagement}
-            role="admin"
-          />
-          <PrivateRoute
-            exact
-            path="/admin/payments/pending"
-            component={AdminPendingPayments}
-            role="admin"
-          />
-          <Route exact path="/admin-attendance">
-            <AdminAttendance />
-          </Route>
-          <Route path="/equipment-management" component={EquipmentManagement} />
-          <Route path="/admin-payments" component={AdminPayments} />
-
-          {/* Protected Member Routes */}
-          <PrivateRoute
-            exact
-            path="/member"
-            component={MemberDashboard}
-            role="member"
-          />
-          <PrivateRoute
-            exact
-            path="/member/qr"
-            component={QrAttendance}
-            role="member"
-          />
-          <PrivateRoute
-            exact
-            path="/member/attendance"
-            component={MyAttendance}
-            role="member"
-          />
-          <PrivateRoute
-            exact
-            path="/member/calorie"
-            component={Calorie}
-            role="member"
-          />
-          <PrivateRoute
-            exact
-            path="/member/meal-planner"
-            component={MealPlanner}
-            role="member"
-          />
-          <PrivateRoute
-            exact
-            path="/member/progress"
-            component={ProgressTracker}
-            role="member"
-          />
-          <PrivateRoute
-            exact
-            path="/member/muscle-gain"
-            component={MuscleGainTracker}
-            role="member"
-          />
-          <PrivateRoute
-            exact
-            path="/member/payment"
-            component={MemberPayment}
-            role="member"
-          />
-
-          <PrivateRoute
-            exact
-            path="/account-settings"
-            component={AccountSettings}
-          />
-
-          {/* Payment Routes */}
-          <Route path="/payment/success" component={PaymentReturn} />
-          <Route path="/payment/failed" component={PaymentReturn} />
-          <PrivateRoute
-            exact
-            path="/member/payment/success"
-            component={PaymentSuccess}
-            role="member"
-          />
-          <PrivateRoute
-            exact
-            path="/member/payment/failed"
-            component={PaymentFailed}
-            role="member"
-          />
-
-            {/* Default redirect */}
             <Route
               exact
-              path="/"
-              render={() => (
-                <Redirect
-                  to={readAuthState().isAuthed ? (readAuthState().role === 'admin' ? '/admin' : '/member') : '/home'}
-                />
+              path="/admin"
+              render={protectedPage(
+                AdminDashboard,
+                "admin"
               )}
             />
 
-            {/* Catch-all: never leave the outlet blank */}
-            <Route render={() => <Redirect to="/home" />} />
+            <Route
+              exact
+              path="/members-management"
+              render={protectedPage(
+                MembersManagement,
+                "admin"
+              )}
+            />
+
+            <Route
+              exact
+              path="/admin-payments"
+              render={protectedPage(
+                AdminPayments,
+                "admin"
+              )}
+            />
+
+            <Route
+              exact
+              path="/admin/payments/pending"
+              render={protectedPage(
+                AdminPendingPayments,
+                "admin"
+              )}
+            />
+
+            <Route
+              exact
+              path="/admin-attendance"
+              render={protectedPage(
+                AdminAttendance,
+                "admin"
+              )}
+            />
+
+            <Route
+              exact
+              path="/equipment-management"
+              render={protectedPage(
+                EquipmentManagement,
+                "admin"
+              )}
+            />
+
+            {/* ========================= */}
+            {/* Protected Member Routes   */}
+            {/* ========================= */}
+
+            <Route
+              exact
+              path="/member"
+              render={protectedPage(
+                MemberDashboard,
+                "member"
+              )}
+            />
+
+            <Route
+              exact
+              path="/member/qr"
+              render={protectedPage(
+                QrAttendance,
+                "member"
+              )}
+            />
+
+            <Route
+              exact
+              path="/member/attendance"
+              render={protectedPage(
+                MyAttendance,
+                "member"
+              )}
+            />
+
+            <Route
+              exact
+              path="/member/calorie"
+              render={protectedPage(
+                Calorie,
+                "member"
+              )}
+            />
+
+            <Route
+              exact
+              path="/member/meal-planner"
+              render={protectedPage(
+                MealPlanner,
+                "member"
+              )}
+            />
+
+            <Route
+              exact
+              path="/member/progress"
+              render={protectedPage(
+                ProgressTracker,
+                "member"
+              )}
+            />
+
+            <Route
+              exact
+              path="/member/muscle-gain"
+              render={protectedPage(
+                MuscleGainTracker,
+                "member"
+              )}
+            />
+
+            <Route
+              exact
+              path="/member/payment"
+              render={protectedPage(
+                MemberPayment,
+                "member"
+              )}
+            />
+
+            {/* ========================= */}
+            {/* Shared Protected Route    */}
+            {/* ========================= */}
+
+            <Route
+              exact
+              path="/account-settings"
+              render={protectedPage(AccountSettings)}
+            />
+
+            {/* ========================= */}
+            {/* Payment Callback Routes   */}
+            {/* ========================= */}
+
+            <Route
+              exact
+              path="/payment/success"
+              component={PaymentReturn}
+            />
+
+            <Route
+              exact
+              path="/payment/failed"
+              component={PaymentReturn}
+            />
+
+            <Route
+              exact
+              path="/member/payment/success"
+              render={protectedPage(
+                PaymentSuccess,
+                "member"
+              )}
+            />
+
+            <Route
+              exact
+              path="/member/payment/failed"
+              render={protectedPage(
+                PaymentFailed,
+                "member"
+              )}
+            />
+
+            {/* Root route */}
+            <Route
+              exact
+              path="/"
+              render={() => {
+                const auth = readAuthState();
+
+                if (!auth.isAuthed) {
+                  return <Redirect to="/home" />;
+                }
+
+                return (
+                  <Redirect
+                    to={
+                      auth.role === "admin"
+                        ? "/admin"
+                        : "/member"
+                    }
+                  />
+                );
+              }}
+            />
+
+            {/* Catch-all route */}
+            <Route
+              render={() => {
+                const auth = readAuthState();
+
+                if (!auth.isAuthed) {
+                  return <Redirect to="/home" />;
+                }
+
+                return (
+                  <Redirect
+                    to={
+                      auth.role === "admin"
+                        ? "/admin"
+                        : "/member"
+                    }
+                  />
+                );
+              }}
+            />
           </IonRouterOutlet>
         </IonSplitPane>
       </IonReactRouter>
