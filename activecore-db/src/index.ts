@@ -84,7 +84,518 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
     process.exit(1);
   }
 }
+function mealPlannerShuffle<T>(items: T[]): T[] {
+  const copy = [...items];
 
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
+  }
+
+  return copy;
+}
+
+function mealPlannerParseJson(raw: string): any | null {
+  const cleaned = String(raw || '')
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  if (!cleaned) return null;
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  }
+}
+
+function mealPlannerGoalRules(goal: unknown): string {
+  const value = String(goal || '').trim().toLowerCase();
+
+  if (/(muscle|bulk|gain|strength)/.test(value)) {
+    return [
+      'Goal strategy: muscle gain / strength support.',
+      'Distribute protein across breakfast, lunch, dinner, and any requested snack.',
+      'Each main meal should normally provide 25-45 g protein.',
+      'Prefer lean Filipino protein sources, adequate rice/root-crop portions, vegetables, and recovery-friendly snacks.',
+      'Do not merely rename a weight-loss plan; choose clearly higher-protein meals and portions while staying within the supplied targets.'
+    ].join(' ');
+  }
+
+  if (/(lose|loss|slim|cut|fat)/.test(value)) {
+    return [
+      'Goal strategy: fat loss / weight management.',
+      'Prioritize high-protein, high-fiber, lower-energy-density meals.',
+      'Use measured rice portions, vegetables, soups, grilled/steamed dishes, and limit deep-fried or sugar-heavy choices.',
+      'Do not go below the supplied calorie target; portion the meals so the daily total stays close to target.'
+    ].join(' ');
+  }
+
+  if (/(maintain|maintenance|balanced|healthy)/.test(value)) {
+    return [
+      'Goal strategy: maintenance and balanced nutrition.',
+      'Use a balanced distribution of protein, vegetables, fruit, and culturally appropriate carbohydrate portions.',
+      'Favor sustainable variety rather than aggressive restriction or bulking.'
+    ].join(' ');
+  }
+
+  return [
+    `Goal strategy: "${String(goal || 'general healthy eating')}".`,
+    'Translate this goal into visibly different food choices, portions, protein distribution, and meal timing.',
+    'Do not return a generic default plan.'
+  ].join(' ');
+}
+
+function mealPlannerLifestyleRules(lifestyle: unknown): string {
+  const value = String(lifestyle || '').trim().toLowerCase();
+
+  if (/(very active|athlete|heavy|intense)/.test(value)) {
+    return 'Lifestyle strategy: very active. Emphasize carbohydrate availability around activity, hydration-supportive foods, and evenly distributed protein.';
+  }
+
+  if (/(active|moderate|exercise|workout)/.test(value)) {
+    return 'Lifestyle strategy: active. Use balanced carbohydrate portions, protein at every main meal, and a practical pre- or post-activity snack when snacks are requested.';
+  }
+
+  if (/(sedentary|inactive|desk|office)/.test(value)) {
+    return 'Lifestyle strategy: sedentary. Prioritize vegetables, fiber, lean protein, and measured energy-dense ingredients while still meeting the exact supplied calorie target.';
+  }
+
+  return `Lifestyle strategy: "${String(lifestyle || 'not specified')}". Make meal size, meal timing, and food selection consistent with this lifestyle instead of using a generic template.`;
+}
+
+function mealPlannerMealTypeRules(mealType: unknown): string {
+  const value = String(mealType || '').trim();
+  const lower = value.toLowerCase();
+
+  if (/(5|five|snack|multiple)/.test(lower)) {
+    return `Meal pattern: "${value}". Include breakfast, morningSnack, lunch, afternoonSnack, and dinner every day. Snacks must be real, goal-compatible foods and must be counted in totals.`;
+  }
+
+  if (/(4|four)/.test(lower)) {
+    return `Meal pattern: "${value}". Include breakfast, lunch, one snack, and dinner every day. Count the snack in the daily macros.`;
+  }
+
+  if (/(2|two)/.test(lower)) {
+    return `Meal pattern: "${value}". Use exactly two substantial meals per day. Preserve the keys "lunch" and "dinner" for compatibility and do not add unrequested snacks.`;
+  }
+
+  return `Meal pattern: "${value || '3 meals per day'}". Include breakfast, lunch, and dinner every day. Add snacks only when the selected meal type explicitly asks for them.`;
+}
+
+function mealPlannerExtractMealNamesFromSavedPlans(rows: any[]): string[] {
+  const names = new Set<string>();
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    try {
+      const rawPlan = typeof row?.plan_data === 'string'
+        ? JSON.parse(row.plan_data)
+        : row?.plan_data;
+
+      const weekPlan = rawPlan?.weekPlan || rawPlan?.mealPlan?.weekPlan || [];
+
+      for (const day of Array.isArray(weekPlan) ? weekPlan : []) {
+        const meals = day?.meals && typeof day.meals === 'object'
+          ? Object.values(day.meals)
+          : [];
+
+        for (const meal of meals) {
+          if (typeof meal === 'string') {
+            names.add(meal.trim());
+          } else if (meal && typeof meal === 'object' && typeof (meal as any).name === 'string') {
+            names.add((meal as any).name.trim());
+          }
+        }
+      }
+    } catch {
+      // Ignore malformed historical plans.
+    }
+  }
+
+  return Array.from(names).filter(Boolean).slice(0, 60);
+}
+
+function mealPlannerHasValidWeekPlan(value: any): boolean {
+  if (!Array.isArray(value) || value.length !== 7) return false;
+
+  const expectedDays = new Set([
+    'monday', 'tuesday', 'wednesday', 'thursday',
+    'friday', 'saturday', 'sunday'
+  ]);
+
+  return value.every((day: any) => {
+    const dayName = String(day?.day || '').trim().toLowerCase();
+    const meals = day?.meals;
+
+    return expectedDays.has(dayName)
+      && meals
+      && typeof meals === 'object'
+      && Object.keys(meals).length >= 2;
+  });
+}
+
+
+type MealPlannerAllergenKey =
+  | 'egg'
+  | 'dairy'
+  | 'fish'
+  | 'shellfish'
+  | 'peanut'
+  | 'tree_nut'
+  | 'soy'
+  | 'wheat_gluten'
+  | 'sesame';
+
+const MEAL_PLANNER_ALLERGEN_PATTERNS: Record<MealPlannerAllergenKey, RegExp[]> = {
+  egg: [
+    /\beggs?\b/i,
+    /\bitlog\b/i,
+    /\bbalut\b/i,
+    /\bpenoy\b/i,
+    /\bsalted egg\b/i,
+    /\bduck egg\b/i,
+    /\bmayonnaise\b/i,
+    /\bmayo\b/i,
+    /\baioli\b/i,
+    /\bmeringue\b/i,
+    /\bcustard\b/i,
+    /\bleche flan\b/i,
+    /\bomelett?e\b/i,
+    /\bscrambled egg\b/i,
+    /\bfried egg\b/i,
+    /\begg noodles?\b/i,
+    /\begg wash\b/i,
+    /\btortang\b/i,
+    /silog\b/i,
+  ],
+  dairy: [
+    /\bmilk\b/i,
+    /\bgatas\b/i,
+    /\bcheese\b/i,
+    /\bkeso\b/i,
+    /\bbutter\b/i,
+    /\bcream\b/i,
+    /\byog(?:h)?urt\b/i,
+    /\bwhey\b/i,
+    /\bcasein\b/i,
+    /\bcondensed milk\b/i,
+    /\bevaporated milk\b/i,
+  ],
+  fish: [
+    /\bfish\b/i,
+    /\bpatis\b/i,
+    /\bfish sauce\b/i,
+    /\bbangus\b/i,
+    /\btilapia\b/i,
+    /\btuna\b/i,
+    /\bsalmon\b/i,
+    /\bsardines?\b/i,
+    /\bgalunggong\b/i,
+    /\btamban\b/i,
+    /\banchov(?:y|ies)\b/i,
+  ],
+  shellfish: [
+    /\bshellfish\b/i,
+    /\bshrimp\b/i,
+    /\bprawns?\b/i,
+    /\bhipon\b/i,
+    /\bcrab\b/i,
+    /\balimango\b/i,
+    /\balimasag\b/i,
+    /\blobster\b/i,
+    /\bmussels?\b/i,
+    /\btahong\b/i,
+    /\boysters?\b/i,
+    /\bscallops?\b/i,
+    /\bsquid\b/i,
+    /\bpusit\b/i,
+    /\boctopus\b/i,
+  ],
+  peanut: [
+    /\bpeanuts?\b/i,
+    /\bmani\b/i,
+    /\bpeanut butter\b/i,
+  ],
+  tree_nut: [
+    /\bcashews?\b/i,
+    /\balmonds?\b/i,
+    /\bwalnuts?\b/i,
+    /\bpecans?\b/i,
+    /\bpistachios?\b/i,
+    /\bhazelnuts?\b/i,
+    /\bmacadamias?\b/i,
+    /\bbrazil nuts?\b/i,
+  ],
+  soy: [
+    /\bsoy\b/i,
+    /\bsoya\b/i,
+    /\bsoy sauce\b/i,
+    /\btoyo\b/i,
+    /\btofu\b/i,
+    /\btokwa\b/i,
+    /\btaho\b/i,
+    /\bmiso\b/i,
+    /\btempeh\b/i,
+  ],
+  wheat_gluten: [
+    /\bwheat\b/i,
+    /\bgluten\b/i,
+    /\bflour\b/i,
+    /\bharina\b/i,
+    /\bbreadcrumbs?\b/i,
+    /\bbread\b/i,
+    /\bpandesal\b/i,
+    /\bpasta\b/i,
+    /\bnoodles?\b/i,
+    /\bcrackers?\b/i,
+    /\bbiscuits?\b/i,
+  ],
+  sesame: [
+    /\bsesame\b/i,
+    /\blinga\b/i,
+    /\btahini\b/i,
+    /\bsesame oil\b/i,
+  ],
+};
+
+function mealPlannerCanonicalAllergen(value: unknown): MealPlannerAllergenKey | null {
+  const token = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+
+  if (['egg', 'eggs'].includes(token)) return 'egg';
+  if (['dairy', 'milk', 'lactose'].includes(token)) return 'dairy';
+  if (token === 'fish') return 'fish';
+  if (['shellfish', 'shrimp', 'crab'].includes(token)) return 'shellfish';
+  if (['peanut', 'peanuts'].includes(token)) return 'peanut';
+  if (['tree_nut', 'tree_nuts', 'nuts'].includes(token)) return 'tree_nut';
+  if (['soy', 'soya'].includes(token)) return 'soy';
+  if (['wheat_gluten', 'wheat', 'gluten'].includes(token)) return 'wheat_gluten';
+  if (token === 'sesame') return 'sesame';
+
+  return null;
+}
+
+function mealPlannerSelectedAllergens(values: unknown[]): MealPlannerAllergenKey[] {
+  const selected = new Set<MealPlannerAllergenKey>();
+
+  for (const value of Array.isArray(values) ? values : []) {
+    const allergen = mealPlannerCanonicalAllergen(value);
+    if (allergen) selected.add(allergen);
+  }
+
+  return Array.from(selected);
+}
+
+function mealPlannerFlattenFoodValue(value: any): string[] {
+  if (value == null) return [];
+  if (typeof value === 'string' || typeof value === 'number') return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(mealPlannerFlattenFoodValue);
+  if (typeof value === 'object') return Object.values(value).flatMap(mealPlannerFlattenFoodValue);
+  return [];
+}
+
+function mealPlannerFoodText(value: any): string {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return '';
+
+  const relevantFields = [
+    value.name,
+    value.title,
+    value.description,
+    value.ingredients,
+    value.ingredient,
+    value.ings,
+    value.recipeIngredients,
+    value.recipe_ingredients,
+    value.instructions,
+    value.ai_instructions,
+    value.steps,
+    value.recipeSteps,
+    value.recipe_steps,
+    value.cookingInstructions,
+    value.cooking_instructions,
+    value.procedure,
+    value.preparation,
+    value.recipe,
+    value.allergens,
+    value.allergyInfo,
+    value.allergy_info,
+    value.sauce,
+    value.side,
+    value.garnish,
+  ];
+
+  return mealPlannerFlattenFoodValue(relevantFields)
+    .join(' ')
+    .toLowerCase()
+    // Do not flag a purely descriptive safety phrase as an ingredient.
+    .replace(/\b(?:egg|dairy|fish|shellfish|peanut|soy|gluten|wheat|sesame)[- ]free\b/g, ' ')
+    .replace(/\bwithout\s+(?:egg|eggs|dairy|fish|shellfish|peanut|peanuts|soy|gluten|wheat|sesame)\b/g, ' ')
+    .replace(/\bno\s+(?:egg|eggs|dairy|fish|shellfish|peanut|peanuts|soy|gluten|wheat|sesame)\b/g, ' ');
+}
+
+function mealPlannerFindAllergenHits(value: any, allergyTokens: unknown[]): MealPlannerAllergenKey[] {
+  const selected = mealPlannerSelectedAllergens(allergyTokens);
+  if (selected.length === 0) return [];
+
+  const foodText = mealPlannerFoodText(value);
+  if (!foodText) return [];
+
+  return selected.filter((allergen) =>
+    MEAL_PLANNER_ALLERGEN_PATTERNS[allergen].some((pattern) => pattern.test(foodText))
+  );
+}
+
+function mealPlannerHardFilterDishesByAllergies(dishes: any[], allergyTokens: unknown[]): any[] {
+  const selected = mealPlannerSelectedAllergens(allergyTokens);
+  if (selected.length === 0) return Array.isArray(dishes) ? dishes : [];
+
+  return (Array.isArray(dishes) ? dishes : []).filter(
+    (dish) => mealPlannerFindAllergenHits(dish, selected).length === 0
+  );
+}
+
+interface MealPlannerAllergenViolation {
+  day: string;
+  mealSlot: string;
+  mealName: string;
+  allergens: MealPlannerAllergenKey[];
+}
+
+function mealPlannerFindWeekPlanAllergenViolations(
+  weekPlan: any[],
+  allergyTokens: unknown[]
+): MealPlannerAllergenViolation[] {
+  const violations: MealPlannerAllergenViolation[] = [];
+
+  for (const day of Array.isArray(weekPlan) ? weekPlan : []) {
+    const meals = day?.meals && typeof day.meals === 'object' ? day.meals : {};
+
+    for (const [mealSlot, meal] of Object.entries(meals)) {
+      const allergens = mealPlannerFindAllergenHits(meal, allergyTokens);
+      if (allergens.length === 0) continue;
+
+      violations.push({
+        day: String(day?.day || ''),
+        mealSlot,
+        mealName: typeof meal === 'string' ? meal : String((meal as any)?.name || ''),
+        allergens,
+      });
+    }
+  }
+
+  return violations;
+}
+
+function mealPlannerDishNumber(dish: any, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = Number(dish?.[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function mealPlannerDishFitsSlot(dish: any, mealSlot: string): boolean {
+  const category = String(dish?.category || '').toLowerCase();
+  const slot = String(mealSlot || '').toLowerCase();
+
+  if (slot.includes('snack')) return /snack|merienda|fruit|dessert/.test(category);
+  if (slot === 'breakfast') return /breakfast|almusal|rice|porridge|soup/.test(category);
+  if (slot === 'lunch' || slot === 'dinner') return /main|lunch|dinner|ulam|entree|rice|soup/.test(category);
+  return true;
+}
+
+function mealPlannerDishToMeal(dish: any, allergenLabel: string): any {
+  return {
+    name: String(dish?.name || 'Allergen-safe Filipino meal'),
+    portion: String(dish?.portion || dish?.serving_size || dish?.servingSize || '1 measured serving'),
+    calories: mealPlannerDishNumber(dish, 'calories', 'cal'),
+    protein: mealPlannerDishNumber(dish, 'protein', 'pro'),
+    carbs: mealPlannerDishNumber(dish, 'carbs', 'carb'),
+    fats: mealPlannerDishNumber(dish, 'fats', 'fat'),
+    ingredients: dish?.ingredients || [],
+    instructions: dish?.instructions || dish?.steps || dish?.procedure || [],
+    personalizationReason: `Selected from the verified ${allergenLabel}-free dish pool.`,
+  };
+}
+
+function mealPlannerReplaceAllergenMeals(
+  weekPlan: any[],
+  safeDishes: any[],
+  allergyTokens: unknown[]
+): any[] {
+  const selected = mealPlannerSelectedAllergens(allergyTokens);
+  if (selected.length === 0) return weekPlan;
+
+  const allergenLabel = selected.join(', ');
+  const safePool = mealPlannerShuffle(
+    mealPlannerHardFilterDishesByAllergies(safeDishes, selected)
+  );
+  const usedNames = new Set<string>();
+
+  for (const day of Array.isArray(weekPlan) ? weekPlan : []) {
+    for (const meal of Object.values(day?.meals || {})) {
+      const name = typeof meal === 'string' ? meal : String((meal as any)?.name || '');
+      if (name) usedNames.add(name.toLowerCase());
+    }
+  }
+
+  let cursor = 0;
+
+  return (Array.isArray(weekPlan) ? weekPlan : []).map((day) => {
+    const nextMeals: Record<string, any> = { ...(day?.meals || {}) };
+
+    for (const [mealSlot, meal] of Object.entries(nextMeals)) {
+      if (mealPlannerFindAllergenHits(meal, selected).length === 0) continue;
+
+      const preferred = safePool.filter(
+        (dish) => mealPlannerDishFitsSlot(dish, mealSlot)
+          && !usedNames.has(String(dish?.name || '').toLowerCase())
+      );
+      const fallback = safePool.filter(
+        (dish) => !usedNames.has(String(dish?.name || '').toLowerCase())
+      );
+      const candidates = preferred.length > 0 ? preferred : fallback;
+      const replacementDish = candidates[cursor % Math.max(candidates.length, 1)];
+      cursor += 1;
+
+      if (replacementDish) {
+        nextMeals[mealSlot] = mealPlannerDishToMeal(replacementDish, allergenLabel);
+        usedNames.add(String(replacementDish?.name || '').toLowerCase());
+      }
+    }
+
+    return { ...day, meals: nextMeals };
+  });
+}
+
+function mealPlannerAllergenBlocklistText(allergyTokens: unknown[]): string {
+  const selected = mealPlannerSelectedAllergens(allergyTokens);
+  if (selected.length === 0) return 'none';
+
+  return selected.map((allergen) => {
+    const patterns = MEAL_PLANNER_ALLERGEN_PATTERNS[allergen]
+      .map((pattern) => pattern.source.replace(/\\b/g, '').replace(/\\/g, ''))
+      .slice(0, 12)
+      .join(', ');
+    return `${allergen}: ${patterns}`;
+  }).join(' | ');
+}
 // Track OpenAI availability globally
 let openaiAvailable = true;
 
@@ -2584,47 +3095,129 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
 // ===== DEV UTILITIES (development only) =====
 // Creates a JWT for an existing user by username, for local/dev convenience.
-app.post('/api/dev/token', async (req, res) => {
+app.post('/api/dev/token', async (req: Request, res: Response) => {
   try {
+    console.log('[DEV TOKEN] Request received');
+    console.log('[DEV TOKEN] NODE_ENV:', process.env.NODE_ENV);
+
     if (process.env.NODE_ENV !== 'development') {
-      return res.status(404).json({ success: false, message: 'Not found' });
+      return res.status(404).json({
+        success: false,
+        message: 'Not found',
+      });
     }
 
-    const username = String(req.body?.username || req.body?.email || '').trim();
-    if (!username) {
-      return res.status(400).json({ success: false, message: 'Username is required' });
+    const identifier = String(
+      req.body?.username ?? req.body?.email ?? ''
+    )
+      .trim()
+      .toLowerCase();
+
+    if (!identifier) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username or email is required',
+      });
     }
 
+    console.log('[DEV TOKEN] Identifier received:', identifier);
+
+    /*
+     * PostgreSQL/Supabase query.
+     *
+     * Examples accepted:
+     * - admin@example.com
+     * - admin
+     *
+     * The second comparison allows "admin" to match
+     * an email such as "admin@example.com".
+     */
     const [users] = await pool.query<any>(
-      'SELECT id, email, first_name, last_name, role FROM users WHERE LOWER(email) = LOWER(?)',
-      [username]
+      `
+        SELECT
+          id,
+          email,
+          first_name,
+          last_name,
+          role,
+          status,
+          payment_status
+        FROM users
+        WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
+           OR LOWER(SPLIT_PART(TRIM(email), '@', 1)) = LOWER(TRIM(?))
+        LIMIT 1
+      `,
+      [identifier, identifier]
     );
 
-    if (!Array.isArray(users) || users.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+    const matchingUsers = Array.isArray(users) ? users : [];
+
+    console.log(
+      '[DEV TOKEN] Matching users:',
+      matchingUsers.length
+    );
+
+    if (matchingUsers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+        identifier,
+      });
     }
 
-    const user = users[0];
+    const user = matchingUsers[0];
+
+    if (!user.id || !user.email || !user.role) {
+      console.error('[DEV TOKEN] Incomplete user record:', {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      return res.status(500).json({
+        success: false,
+        message: 'User record is incomplete',
+      });
+    }
+
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      {
+        id: user.id,
+        sub: String(user.id),
+        email: user.email,
+        role: user.role,
+      },
       getJwtSecret(),
-      { expiresIn: '24h' }
+      {
+        expiresIn: '24h',
+      }
     );
 
-    return res.json({
+    return res.status(200).json({
       success: true,
+      message: 'Development token issued successfully',
       token,
       user: {
         id: user.id,
         email: user.email,
-        username: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
+        username: String(user.email).includes('@')
+          ? String(user.email).split('@')[0]
+          : user.email,
+        firstName: user.first_name ?? '',
+        lastName: user.last_name ?? '',
         role: user.role,
+        status: user.status ?? null,
+        paymentStatus: user.payment_status ?? null,
       },
     });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, message: 'Failed to issue dev token', error: getErrorMessage(err) });
+  } catch (err: unknown) {
+    console.error('[DEV TOKEN] Error:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to issue development token',
+      error: getErrorMessage(err),
+    });
   }
 });
 
@@ -3854,7 +4447,7 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
 
   try {
     const userId = req.user!.id;
-    const { lifestyle, mealType, goal, diet, allergies, dietaryRestrictions, targets, planName } = req.body;
+    const { lifestyle, mealType, goal, diet, allergies, dietaryRestrictions, targets } = req.body;
     const healthConditions = normalizeHealthConditions(req.body?.healthConditions || req.body?.healthCondition);
     const normalizedDietaryRestrictions = normalizeDietaryRestrictions(dietaryRestrictions);
     const inferredDiet = inferDietFromRestrictions(normalizedDietaryRestrictions);
@@ -3900,6 +4493,22 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
       let weekPlan = generateWeekPlan(null, targets, goal, allRestrictionTokens, undefined, normalizedDiet);
       weekPlan = addRiceSidesToMeals(weekPlan);
       weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
+
+      const offlineAllergenViolations = mealPlannerFindWeekPlanAllergenViolations(
+        weekPlan,
+        allergyTokens
+      );
+
+      if (offlineAllergenViolations.length > 0) {
+        return res.status(503).json({
+          success: false,
+          message: 'Database is unavailable and the fallback plan could not be verified as allergen-safe.',
+          allergiesApplied: allergyTokens,
+          allergenViolations: offlineAllergenViolations,
+          saved: false,
+        });
+      }
+
       weekPlan = recomputeWeekPlanTotals(weekPlan);
       weekPlan = annotateWeekPlanWithEvidence(weekPlan, nutritionProfile, citationIds);
       return res.status(503).json({
@@ -3928,74 +4537,181 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
       nutritionProfile.healthConditions,
       nutritionProfile.dietaryRestrictions.foodPreferences
     );
-    const filteredDbDishes = profileFilteredDbDishes;
+    // Apply a second, explicit allergen filter. The generic token filter may
+    // miss aliases such as mayonnaise, balut, tortang, or *silog for egg.
+    const filteredDbDishes = mealPlannerHardFilterDishesByAllergies(
+      profileFilteredDbDishes,
+      allergyTokens
+    );
+
+    if (allergyTokens.length > 0 && filteredDbDishes.length === 0) {
+      return res.status(422).json({
+        success: false,
+        message: 'No database meals remain after applying the selected allergies.',
+        allergiesApplied: allergyTokens,
+      });
+    }
 
     const poolAssessment = assessDietPoolSufficiency(filteredDbDishes);
     const allowAIFillInMeals = !!normalizedDiet && poolAssessment.isInsufficient;
 
-    const dishesForPrompt = filteredDbDishes.map((d: any) => ({
+    /*
+     * Important for variety:
+     * - Shuffle before each generation so the model does not repeatedly favor
+     *   the alphabetically first dishes.
+     * - Limit prompt size so the full 7-day JSON is less likely to be truncated.
+     */
+    const randomizedDbDishes = mealPlannerShuffle(filteredDbDishes || []);
+    const promptDishPool = randomizedDbDishes.slice(0, 120);
+
+    const dishesForPrompt = promptDishPool.map((d: any) => ({
       name: d.name,
       category: d.category,
       calories: Number(d.calories ?? d.cal ?? 0),
       protein: Number(d.protein ?? d.pro ?? 0),
       carbs: Number(d.carbs ?? d.carb ?? 0),
       fats: Number(d.fats ?? d.fat ?? 0),
-      ingredients: typeof d.ingredients === 'string' ? d.ingredients : (d.ingredients || [])
+      ingredients: typeof d.ingredients === 'string'
+        ? d.ingredients
+        : (d.ingredients || [])
     }));
+
     const dishesJson = JSON.stringify(dishesForPrompt);
 
-    const dietConstraint = normalizedDiet ? `\n- Diet Type: ${humanizeDietType(normalizedDiet)}` : '';
+    let recentMealNames: string[] = [];
+
+    try {
+      const [recentPlanRows] = await pool.query<any>(
+        'SELECT plan_data FROM meal_plans WHERE user_id = ? ORDER BY id DESC LIMIT 3',
+        [userId]
+      );
+
+      recentMealNames = mealPlannerExtractMealNamesFromSavedPlans(
+        Array.isArray(recentPlanRows) ? recentPlanRows : []
+      );
+    } catch {
+      recentMealNames = [];
+    }
+
+    const generationRequestId = [
+      userId,
+      Date.now(),
+      Math.random().toString(36).slice(2, 10)
+    ].join('-');
+
+    const dietConstraint = normalizedDiet
+      ? `\n- Diet type: ${humanizeDietType(normalizedDiet)}`
+      : `\n- Diet type: no special diet selected`;
+
     const dietRuleText = getDietPromptRule(normalizedDiet);
-    const dietRules = dietRuleText ? `\n- ${dietRuleText}` : '';
+    const dietRules = dietRuleText ? `
+- ${dietRuleText}` : '';
+
     const dietPoolNote = allowAIFillInMeals
-      ? `\n- Diet-filtered DB pool is limited (${poolAssessment.reason}); AI may add compliant meals to complete all slots.`
+      ? `
+- The filtered database pool is limited (${poolAssessment.reason}). You may create compliant Filipino meals only for missing slots.`
       : '';
+
     const dishUsageRule = allowAIFillInMeals
-      ? '- Prioritize dishes from the list. If list options are insufficient to complete all 7 days under the selected diet, you may add Filipino meals not in the list only for missing slots. Every added meal must include full macros, measured ingredients, and detailed steps.'
-      : '- Only use dishes that appear in the list (no new dishes).';
+      ? 'Prioritize the supplied dishes. Add a new Filipino meal only when the supplied pool cannot fill a required slot without violating the profile.'
+      : 'Use only meals from the supplied dish pool.';
+
+    const previousMealsRule = recentMealNames.length > 0
+      ? `Avoid reusing these meals from the user's three most recent plans unless medically or dietarily necessary: ${recentMealNames.join(', ')}.`
+      : 'There are no recent saved meals to avoid.';
 
     const prompt = `
-You are a professional Filipino nutritionist and meal planner. The user preferences:
-- Lifestyle: ${lifestyle}
-- Type: ${mealType}
-- Goal: ${goal}${dietConstraint}
-- Allergies / Avoid: ${humanizeTokens(allRestrictionTokens)}
-- Targets: ${targets?.calories ?? 2000} kcal, ${targets?.protein ?? 150}g protein, ${targets?.carbs ?? 250}g carbs, ${targets?.fats ?? 70}g fats
+Create one personalized seven-day Filipino meal plan.
+
+GENERATION REQUEST
+- Request ID: ${generationRequestId}
+- Lifestyle: ${String(lifestyle || 'not specified')}
+- Meal pattern: ${String(mealType || '3 meals per day')}
+- Primary goal: ${String(goal || 'general healthy eating')}${dietConstraint}
+- Allergies and prohibited foods: ${humanizeTokens(allRestrictionTokens) || 'none reported'}
+- Absolute allergen alias blocklist: ${mealPlannerAllergenBlocklistText(allergyTokens)}
+- Daily nutrition targets:
+  - Calories: ${Number(targets?.calories ?? 2000)} kcal
+  - Protein: ${Number(targets?.protein ?? 150)} g
+  - Carbohydrates: ${Number(targets?.carbs ?? 250)} g
+  - Fat: ${Number(targets?.fats ?? 70)} g
 ${dietPoolNote}
+
+PERSONALIZATION RULES
+1. ${mealPlannerGoalRules(goal)}
+2. ${mealPlannerLifestyleRules(lifestyle)}
+3. ${mealPlannerMealTypeRules(mealType)}
+4. ${previousMealsRule}
+5. The selected goal, lifestyle, meal pattern, diet, allergies, health profile, and targets must materially change the chosen dishes and portions. Never return a generic default plan.
+6. Treat allergies, avoid-list items, diet rules, and health-profile restrictions as hard constraints. Check the meal name, every ingredient, sauce, seasoning, garnish, side dish, coating, noodle, dessert, and every cooking step. Never include an allergen under a synonym or prepared-food name.
+7. For an egg allergy, exclude eggs and all common egg-containing foods, including itlog, balut, penoy, mayonnaise/mayo, aioli, custard, leche flan, meringue, omelet/omelette, egg noodles, egg wash, tortang dishes, and any *silog meal. Do not confuse eggplant with egg.
+8. Keep each day's calories within ±7% of the calorie target unless the supplied medical profile requires a stricter rule.
+9. Keep the seven-day average protein, carbohydrate, and fat totals within ±10% of the supplied daily macro targets.
+10. Do not repeat the same main meal anywhere in the seven-day plan. Do not repeat the same primary protein on consecutive days.
+11. Lunch and dinner must include a measured Filipino carbohydrate side such as rice, brown rice, corn, kamote, or another profile-compatible alternative. Do not automatically add fried rice to every meal.
+12. Use culturally appropriate Filipino dishes, practical ingredients, and realistic household portions.
+13. ${dishUsageRule}${dietRules}
+
+HEALTH AND EVIDENCE PROFILE
 ${buildNutritionProfilePromptBlock(nutritionProfile, targets)}
 
-  ${buildNationalNutritionStandardsBlock(targets)}
+${buildNationalNutritionStandardsBlock(targets)}
 
-Diet-compatible meals from the DB list (JSON):
+AVAILABLE DISH POOL
 ${dishesJson}
 
-Rules:
-- ${dishUsageRule}${dietRules}
-- IMPORTANT: For lunch and dinner, include a rice/carb side dish (like "Sinangag na Kanin" or "Fried Rice") to make it a complete Filipino meal.
-- Randomize meals across days and avoid repeating the same meal on consecutive days.
-- Every meal object must include complete ingredients with specific variants and exact measurements (e.g., "120 g pork tocino", "10 ml canola oil", "1 large chicken egg (50 g)", "240 ml water"). Avoid vague terms like "oil", "meat", "fish", or plain "tocino".
-- Cooking instructions must be detailed and practical (4-7 numbered steps) with clear actions and approximate time/heat when relevant.
-- Return exactly JSON with "weekPlan": an array of 7 objects with structure:
-  { "day":"Monday", "meals": { "breakfast": "Tapsilog"|{name:..., calories:..., ingredients:[]...}, "lunch": {name: "main dish with rice side"}, ... }, "totalCalories": number, "totalProtein": number, "totalCarbs": number, "totalFats": number }
+OUTPUT REQUIREMENTS
+- Return JSON only. Do not use Markdown or code fences.
+- Return exactly one object with a "weekPlan" array containing Monday through Sunday in order.
+- Every meal must be an object, not a plain string.
+- Recipe details will be enriched by the server after selection, so keep the response compact and focus on personalized selection, portions, and macros.
+- Use this exact shape:
+{
+  "weekPlan": [
+    {
+      "day": "Monday",
+      "meals": {
+        "breakfast": {
+          "name": "Meal name",
+          "portion": "Measured serving",
+          "calories": 0,
+          "protein": 0,
+          "carbs": 0,
+          "fats": 0,
+          "personalizationReason": "One brief reason this meal fits the user's goal/profile"
+        },
+        "lunch": {
+          "name": "Main dish + measured carbohydrate side",
+          "portion": "Measured serving",
+          "calories": 0,
+          "protein": 0,
+          "carbs": 0,
+          "fats": 0,
+          "personalizationReason": "Brief reason"
+        },
+        "dinner": {
+          "name": "Main dish + measured carbohydrate side",
+          "portion": "Measured serving",
+          "calories": 0,
+          "protein": 0,
+          "carbs": 0,
+          "fats": 0,
+          "personalizationReason": "Brief reason"
+        }
+      },
+      "totalCalories": 0,
+      "totalProtein": 0,
+      "totalCarbs": 0,
+      "totalFats": 0
+    }
+  ]
+}
 `;
 
     let weekPlan: any[] = [];
-    let preferenceId: number | null = null;
 
-    // Try to get user's preference id early
-    try {
-      const [prefRows] = await pool.query<any>('SELECT id FROM user_meal_preferences WHERE user_id = ?', [userId]);
-      if (Array.isArray(prefRows) && prefRows.length > 0) {
-        preferenceId = Number(prefRows[0].id);
-      } else {
-        preferenceId = await ensureUserPreferenceExists(userId);
-      }
-    } catch (err: any) {
-      // replaced unsafe access with helper
-      preferenceId = null;
-    }
-
-    // If OpenAI key exists, try AI generation; else fallback immediately
+    // Use the AI when available. Log failures instead of silently hiding why
+    // the deterministic fallback was used.
     if (process.env.OPENAI_API_KEY && openaiAvailable) {
       try {
         const completion: any = await safeOpenAICompletionsCreate({
@@ -4003,57 +4719,91 @@ Rules:
           messages: [
             {
               role: 'system',
-              content: allowAIFillInMeals
-                ? 'You are a Filipino nutritionist. Prefer the provided list, but if it is insufficient for the selected diet, add compliant meals only to fill missing slots.'
-                : 'You are a nutritionist and only use the provided list.'
+              content: [
+                'You are a Filipino registered nutritionist creating strongly personalized meal plans.',
+                'All allergy, medical, diet, and avoid-list constraints are mandatory.',
+                'Never include a prohibited allergen in a meal name, ingredient, sauce, garnish, side, seasoning, coating, or cooking instruction, including synonyms and prepared foods.',
+                'Different user inputs must produce materially different dish choices, portions, protein distribution, and meal timing.',
+                'Return valid JSON only.'
+              ].join(' ')
             },
-            { role: 'user', content: prompt }
+            {
+              role: 'user',
+              content: prompt
+            }
           ],
-          temperature: 0.7,
-          max_tokens: 4000
-        }, 12000);
+          temperature: 0.9,
+          presence_penalty: 0.45,
+          frequency_penalty: 0.25,
+          max_tokens: 8000
+        }, 45000);
 
-        const aiResponse = String((completion?.choices?.[0]?.message?.content) ?? '');
-        let parsed: any = null;
-        try {
-          parsed = JSON.parse(aiResponse || '');
-        } catch (parseErr: any) {
-        }
+        const aiResponse = String(
+          completion?.choices?.[0]?.message?.content ?? ''
+        );
 
-        if (parsed && Array.isArray(parsed.weekPlan) && parsed.weekPlan.length === 7) {
-          weekPlan = await enhanceAIWeekPlanWithDetails(parsed.weekPlan, filteredDbDishes);
-          weekPlan = addRiceSidesToMeals(weekPlan); // Add rice sides to complete Filipino meals
+        const parsed = mealPlannerParseJson(aiResponse);
+
+        const parsedAllergenViolations = mealPlannerFindWeekPlanAllergenViolations(
+          parsed?.weekPlan,
+          allergyTokens
+        );
+
+        if (
+          mealPlannerHasValidWeekPlan(parsed?.weekPlan)
+          && parsedAllergenViolations.length === 0
+        ) {
+          weekPlan = await enhanceAIWeekPlanWithDetails(
+            parsed.weekPlan,
+            randomizedDbDishes
+          );
+
+          weekPlan = addRiceSidesToMeals(weekPlan);
           weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
         } else {
-          const aiDay = parsed && parsed.weekPlan && parsed.weekPlan[0] ? parsed.weekPlan[0] : null;
-          weekPlan = generateWeekPlan(aiDay, targets, goal, allRestrictionTokens, filteredDbDishes, normalizedDiet);
-          weekPlan = addRiceSidesToMeals(weekPlan); // Add rice sides to complete Filipino meals
-          weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
+          console.warn('[Meal Planner] AI returned invalid/incomplete JSON; using randomized fallback', {
+            userId,
+            responseLength: aiResponse.length,
+            parsedDays: Array.isArray(parsed?.weekPlan)
+              ? parsed.weekPlan.length
+              : 0
+          });
         }
       } catch (aiErr: any) {
-        weekPlan = generateWeekPlan(null, targets, goal, allRestrictionTokens, filteredDbDishes, normalizedDiet);
-        weekPlan = addRiceSidesToMeals(weekPlan); // Add rice sides to complete Filipino meals
-        weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
+        console.warn('[Meal Planner] AI generation failed; using randomized fallback', {
+          userId,
+          message: getErrorMessage(aiErr)
+        });
       }
-    } else {
-      weekPlan = generateWeekPlan(null, targets, goal, allRestrictionTokens, filteredDbDishes, normalizedDiet);
-      weekPlan = addRiceSidesToMeals(weekPlan); // Add rice sides to complete Filipino meals
-      weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
     }
 
-    if (hasFlatMainVariety(weekPlan)) {
-      weekPlan = generateWeekPlan(null, targets, goal, allRestrictionTokens, filteredDbDishes, normalizedDiet);
+    if (!mealPlannerHasValidWeekPlan(weekPlan)) {
+      /*
+       * Passing a shuffled pool is important. The former code repeatedly passed
+       * the same alphabetically ordered dish list, so fallback plans were often
+       * identical even when the user changed inputs.
+       */
+      weekPlan = generateWeekPlan(
+        null,
+        targets,
+        goal,
+        allRestrictionTokens,
+        randomizedDbDishes,
+        normalizedDiet
+      );
+
       weekPlan = addRiceSidesToMeals(weekPlan);
       weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
     }
 
-    // Build today's shopping list
-    let todayShoppingList: any[] = [];
-    try {
-      const todayName = new Date().toLocaleString('en-US', { weekday: 'long' });
-      const todayPlan = weekPlan.find((d: any) => d.day === todayName) || weekPlan[0];
-      todayShoppingList = todayPlan ? generateShoppingList([todayPlan]) : [];
-    } catch (err: any) {
+    if (hasFlatMainVariety(weekPlan)) {
+      console.warn('[Meal Planner] Generated plan still has limited variety', {
+        userId,
+        goal,
+        lifestyle,
+        mealType,
+        normalizedDiet
+      });
     }
 
     // Enrich week plan with recipes (AWAIT this to ensure recipes are included in response)
@@ -4062,9 +4812,71 @@ Rules:
     } catch (err: any) {
     }
 
+    // Recipes, fallback logic, or side-dish enrichment can reintroduce an
+    // allergen after the initial dish filtering. Repair violating meals from
+    // the verified-safe database pool, then validate once more before saving.
+    let allergenViolations = mealPlannerFindWeekPlanAllergenViolations(
+      weekPlan,
+      allergyTokens
+    );
+
+    if (allergenViolations.length > 0) {
+      console.warn('[Meal Planner] Replacing meals that violated allergy constraints', {
+        userId,
+        allergyTokens,
+        allergenViolations,
+      });
+
+      weekPlan = mealPlannerReplaceAllergenMeals(
+        weekPlan,
+        randomizedDbDishes,
+        allergyTokens
+      );
+
+      try {
+        weekPlan = await enhanceAIWeekPlanWithDetails(
+          weekPlan,
+          randomizedDbDishes
+        );
+      } catch {
+        // Replacement meals already contain DB details when available.
+      }
+
+      weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
+      allergenViolations = mealPlannerFindWeekPlanAllergenViolations(
+        weekPlan,
+        allergyTokens
+      );
+    }
+
+    if (allergenViolations.length > 0) {
+      console.error('[Meal Planner] Refusing to return an allergen-unsafe plan', {
+        userId,
+        allergyTokens,
+        allergenViolations,
+      });
+
+      return res.status(422).json({
+        success: false,
+        message: 'The generated plan contained a selected allergen and was blocked for safety. Please generate again.',
+        allergiesApplied: allergyTokens,
+        allergenViolations,
+        saved: false,
+      });
+    }
+
     // Final consistency pass: make sure day totals always equal summed meal macros.
     weekPlan = recomputeWeekPlanTotals(weekPlan);
     weekPlan = annotateWeekPlanWithEvidence(weekPlan, nutritionProfile, citationIds);
+
+    let todayShoppingList: any[] = [];
+    try {
+      const todayName = new Date().toLocaleString('en-US', { weekday: 'long' });
+      const todayPlan = weekPlan.find((d: any) => d.day === todayName) || weekPlan[0];
+      todayShoppingList = todayPlan ? generateShoppingList([todayPlan]) : [];
+    } catch {
+      todayShoppingList = [];
+    }
 
     const responseMealPlan = {
       weekPlan,
@@ -4075,35 +4887,16 @@ Rules:
       evidenceSummary,
       citations,
       profileSummary: nutritionProfile,
+      allergiesApplied: allergyTokens,
     };
 
-    // Save meal plan safely
-    try {
-      const safePlanName = planName || "Untitled Plan";
-
-      // ensure we only include generated_at if the column exists
-      const hasGeneratedAt = await dbColumnExists('meal_plans', 'generated_at');
-
-      const insertCols = preferenceId === null
-        ? (hasGeneratedAt ? 'user_id, plan_name, plan_data, generated_at' : 'user_id, plan_name, plan_data')
-        : (hasGeneratedAt ? 'user_id, preference_id, plan_name, plan_data, generated_at' : 'user_id, preference_id, plan_name, plan_data');
-  
-      const insertValsBase = preferenceId === null
-        ? [userId, safePlanName, JSON.stringify(responseMealPlan)]
-        : [userId, preferenceId, safePlanName, JSON.stringify(responseMealPlan)];
-  
-      const insertVals = hasGeneratedAt ? [...insertValsBase, new Date()] : insertValsBase;
-
-      const qMarks = insertVals.map(() => '?').join(', ');
-      await pool.query(`INSERT INTO meal_plans (${insertCols}) VALUES (${qMarks})`, insertVals);
-    } catch (err: any) {
-    }
-
-    // Respond with meal plan
+    // Generation only previews the plan. Saving happens exclusively through
+    // POST /api/meal-planner/save when the user clicks Save Plan.
     res.json({
       success: true,
       mealPlan: responseMealPlan,
-      saved: !!preferenceId
+      allergiesApplied: allergyTokens,
+      saved: false
     });
   } catch (err: any) {
     const errMsg = getErrorMessage(err); // changed
@@ -4448,9 +5241,28 @@ app.post('/api/meal-planner/save', authenticateToken, async (req: AuthRequest, r
     }
 
     const normalizedWeekPlan = recomputeWeekPlanTotals(incomingWeekPlan);
+
+    // Always rebuild shopping lists from the exact week plan being saved.
+    // This prevents an empty/stale client-side list from overwriting the generated list.
+    const shoppingList = generateShoppingList(normalizedWeekPlan);
+    const todayName = new Date().toLocaleString('en-US', { weekday: 'long' });
+    const todayPlan = normalizedWeekPlan.find(
+      (day: any) => String(day?.day || '').toLowerCase() === todayName.toLowerCase()
+    ) || normalizedWeekPlan[0];
+    const todayShoppingList = todayPlan ? generateShoppingList([todayPlan]) : [];
+
     const planPayload = Array.isArray(mealPlan)
-      ? { weekPlan: normalizedWeekPlan }
-      : { ...(mealPlan || {}), weekPlan: normalizedWeekPlan };
+      ? {
+          weekPlan: normalizedWeekPlan,
+          shoppingList,
+          todayShoppingList,
+        }
+      : {
+          ...(mealPlan || {}),
+          weekPlan: normalizedWeekPlan,
+          shoppingList,
+          todayShoppingList,
+        };
 
     // ensure preference exists if needed (unchanged)
     let preferenceId: number | null = null;
@@ -4525,13 +5337,30 @@ app.get('/api/meal-planner/plans', authenticateToken, async (req: AuthRequest, r
     const orderBy = hasGeneratedAt ? 'generated_at' : 'id';
     const [rows] = await pool.query<any>(`SELECT ${cols.join(', ')} FROM meal_plans WHERE user_id = ? ORDER BY ${orderBy} DESC`, [userId]);
 
-    const plans = rows.map((r: any) => ({
-      id: Number(r.id),
-      planName: r.plan_name ?? null,
-      plan_data: typeof r.plan_data === 'string' ? (() => { try { return JSON.parse(r.plan_data); } catch { return r.plan_data; } })() : r.plan_data ?? null,
-      generatedAt: r.generated_at ?? null,
-      updatedAt: r.updated_at ?? r.generated_at ?? null
-    }));
+    const plans = rows.map((r: any) => {
+      const rawPlanData = typeof r.plan_data === 'string'
+        ? (() => { try { return JSON.parse(r.plan_data); } catch { return r.plan_data; } })()
+        : r.plan_data ?? null;
+
+      const planData = rawPlanData
+        && typeof rawPlanData === 'object'
+        && Array.isArray(rawPlanData.weekPlan)
+        ? {
+            ...rawPlanData,
+            shoppingList: Array.isArray(rawPlanData.shoppingList) && rawPlanData.shoppingList.length > 0
+              ? rawPlanData.shoppingList
+              : generateShoppingList(rawPlanData.weekPlan),
+          }
+        : rawPlanData;
+
+      return {
+        id: Number(r.id),
+        planName: r.plan_name ?? null,
+        plan_data: planData,
+        generatedAt: r.generated_at ?? null,
+        updatedAt: r.updated_at ?? r.generated_at ?? null
+      };
+    });
 
     res.json({ success: true, plans });
   } catch (err: any) {
@@ -4572,6 +5401,21 @@ app.get('/api/meal-planner/plans/:id', authenticateToken, async (req: AuthReques
       }
     } else {
       parsed = plan.plan_data;
+    }
+
+    // Compatibility for plans saved before shopping-list persistence was fixed.
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.weekPlan)) {
+      if (!Array.isArray(parsed.shoppingList) || parsed.shoppingList.length === 0) {
+        parsed.shoppingList = generateShoppingList(parsed.weekPlan);
+      }
+
+      if (!Array.isArray(parsed.todayShoppingList) || parsed.todayShoppingList.length === 0) {
+        const todayName = new Date().toLocaleString('en-US', { weekday: 'long' });
+        const todayPlan = parsed.weekPlan.find(
+          (day: any) => String(day?.day || '').toLowerCase() === todayName.toLowerCase()
+        ) || parsed.weekPlan[0];
+        parsed.todayShoppingList = todayPlan ? generateShoppingList([todayPlan]) : [];
+      }
     }
 
     res.json({
