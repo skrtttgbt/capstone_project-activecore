@@ -122,10 +122,21 @@ function mealPlannerParseJson(raw: string): any | null {
   }
 }
 
-function mealPlannerGoalRules(goal: unknown): string {
+function mealPlannerGoalRules(goal: unknown, profile?: any): string {
   const value = String(goal || '').trim().toLowerCase();
+  const hasCkd = Array.isArray(profile?.healthConditions)
+    && profile.healthConditions.includes('chronic_kidney_disease');
 
   if (/(muscle|bulk|gain|strength)/.test(value)) {
+    if (hasCkd) {
+      return [
+        'Goal strategy: strength or muscle support under CKD safety limits.',
+        'Do not use a generic high-protein or bodybuilding plan.',
+        'The CKD stage, dialysis status, metabolic stability, reference weight, and clinician-prescribed targets override the normal muscle-gain protein rules.',
+        'Provide adequate energy and distribute only the allowed protein amount across the requested meals.'
+      ].join(' ');
+    }
+
     return [
       'Goal strategy: muscle gain / strength support.',
       'Distribute protein across breakfast, lunch, dinner, and any requested snack.',
@@ -138,7 +149,9 @@ function mealPlannerGoalRules(goal: unknown): string {
   if (/(lose|loss|slim|cut|fat)/.test(value)) {
     return [
       'Goal strategy: fat loss / weight management.',
-      'Prioritize high-protein, high-fiber, lower-energy-density meals.',
+      hasCkd
+        ? 'Use filling vegetables and measured portions without exceeding the CKD protein target.'
+        : 'Prioritize adequate protein, fiber, and lower-energy-density meals.',
       'Use measured rice portions, vegetables, soups, grilled/steamed dishes, and limit deep-fried or sugar-heavy choices.',
       'Do not go below the supplied calorie target; portion the meals so the daily total stays close to target.'
     ].join(' ');
@@ -521,7 +534,8 @@ function mealPlannerDishFitsSlot(dish: any, mealSlot: string): boolean {
 }
 
 function mealPlannerDishToMeal(dish: any, allergenLabel: string): any {
-  return {
+  return createMealObject({
+    ...dish,
     name: String(dish?.name || 'Allergen-safe Filipino meal'),
     portion: String(dish?.portion || dish?.serving_size || dish?.servingSize || '1 measured serving'),
     calories: mealPlannerDishNumber(dish, 'calories', 'cal'),
@@ -531,7 +545,7 @@ function mealPlannerDishToMeal(dish: any, allergenLabel: string): any {
     ingredients: dish?.ingredients || [],
     instructions: dish?.instructions || dish?.steps || dish?.procedure || [],
     personalizationReason: `Selected from the verified ${allergenLabel}-free dish pool.`,
-  };
+  });
 }
 
 function mealPlannerReplaceAllergenMeals(
@@ -865,6 +879,20 @@ const NUTRITION_CITATIONS: NutritionCitation[] = [
     summary: 'CKD nutrition guidance covering sodium, potassium, phosphorus, protein, and individualized dietitian support.',
   },
   {
+    id: 'kdigo_2024_ckd',
+    title: 'KDIGO 2024 Clinical Practice Guideline for the Evaluation and Management of CKD',
+    organization: 'KDIGO',
+    url: 'https://kdigo.org/wp-content/uploads/2024/03/KDIGO-2024-CKD-Guideline.pdf',
+    summary: 'CKD guidance including non-dialysis protein and sodium recommendations and individualized care.',
+  },
+  {
+    id: 'kdoqi_ckd_nutrition',
+    title: 'KDOQI Clinical Practice Guideline for Nutrition in CKD',
+    organization: 'National Kidney Foundation',
+    url: 'https://www.kidney.org/sites/default/files/Nutrition_GL%2BSubmission_101719_Public_Review_Copy.pdf',
+    summary: 'Nutrition guidance for CKD, including higher protein needs for maintenance hemodialysis and peritoneal dialysis.',
+  },
+  {
     id: 'fda_food_allergies',
     title: 'Food Allergies: What You Need to Know',
     organization: 'FDA',
@@ -941,26 +969,309 @@ function getRestrictionTokensFromProfile(dietaryRestrictions: any, healthConditi
   if (religious === 'halal') tokens.push('halal', 'no_pork', 'no_alcohol');
   if (religious === 'no_pork') tokens.push('no_pork');
   if (religious === 'no_beef') tokens.push('no_beef');
-  if (foodPreferences.includes('low_sodium') || healthConditions.includes('hypertension')) tokens.push('low_sodium');
-  if (foodPreferences.includes('no_fried_foods') || healthConditions.includes('dyslipidemia_cardiovascular')) tokens.push('no_fried_foods');
+  if (
+    foodPreferences.includes('low_sodium')
+    || healthConditions.includes('hypertension')
+    || healthConditions.includes('chronic_kidney_disease')
+  ) tokens.push('low_sodium');
+  if (healthConditions.includes('diabetes')) tokens.push('low_sugar');
+  if (
+    foodPreferences.includes('no_fried_foods')
+    || healthConditions.includes('obesity_overweight')
+    || healthConditions.includes('dyslipidemia_cardiovascular')
+  ) tokens.push('no_fried_foods');
   if (foodPreferences.includes('budget_friendly')) tokens.push('budget_friendly');
 
   return uniqueStrings(tokens);
+}
+
+
+type MealPlannerCkdStage = 'G1' | 'G2' | 'G3A' | 'G3B' | 'G4' | 'G5';
+type MealPlannerCkdTreatment = 'not_on_dialysis' | 'hemodialysis' | 'peritoneal_dialysis' | 'kidney_transplant';
+type MealPlannerLabStatus = 'low' | 'normal' | 'high' | 'unknown';
+
+type MealPlannerCkdProfile = {
+  enabled: boolean;
+  stage: MealPlannerCkdStage | null;
+  treatment: MealPlannerCkdTreatment | null;
+  metabolicallyStable: boolean | null;
+  referenceWeightKg: number | null;
+  referenceWeightType: 'ideal' | 'submitted' | null;
+  serumPotassiumStatus: MealPlannerLabStatus;
+  serumPhosphorusStatus: MealPlannerLabStatus;
+  prescribedProteinGrams: number | null;
+  prescribedProteinGPerKg: number | null;
+  prescribedSodiumMg: number | null;
+  prescribedPotassiumMg: number | null;
+  prescribedPhosphorusMg: number | null;
+  prescribedFluidLimitMl: number | null;
+  clinicianNotes: string;
+};
+
+type MealPlannerHealthRuleContext = {
+  conditions: string[];
+  effectiveTargets: any;
+  effectiveDiet: string;
+  hardAvoidKeywords: string[];
+  promptRules: string[];
+  cautions: string[];
+  validationErrors: string[];
+  limits: Record<string, any>;
+  ckdProfile: MealPlannerCkdProfile;
+};
+
+function mealPlannerOptionalPositiveNumber(value: any): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function mealPlannerOptionalBoolean(value: any): boolean | null {
+  if (typeof value === 'boolean') return value;
+  const token = String(value ?? '').trim().toLowerCase();
+  if (['true', 'yes', '1', 'stable'].includes(token)) return true;
+  if (['false', 'no', '0', 'unstable'].includes(token)) return false;
+  return null;
+}
+
+function normalizeMealPlannerCkdStage(value: any): MealPlannerCkdStage | null {
+  const token = String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/STAGE/g, '')
+    .replace(/CKD/g, '')
+    .replace(/[\s_-]+/g, '');
+
+  const aliases: Record<string, MealPlannerCkdStage> = {
+    '1': 'G1', G1: 'G1',
+    '2': 'G2', G2: 'G2',
+    '3A': 'G3A', G3A: 'G3A',
+    '3B': 'G3B', G3B: 'G3B',
+    '4': 'G4', G4: 'G4',
+    '5': 'G5', G5: 'G5',
+  };
+
+  return aliases[token] || null;
+}
+
+function normalizeMealPlannerCkdTreatment(value: any): MealPlannerCkdTreatment | null {
+  const token = normalizeTokenValue(value);
+  if (['none', 'no', 'not_on_dialysis', 'non_dialysis', 'predialysis', 'pre_dialysis'].includes(token)) return 'not_on_dialysis';
+  if (['hemodialysis', 'haemodialysis', 'hd', 'mhd'].includes(token)) return 'hemodialysis';
+  if (['peritoneal_dialysis', 'pd', 'capd'].includes(token)) return 'peritoneal_dialysis';
+  if (['kidney_transplant', 'renal_transplant', 'post_transplant', 'transplant'].includes(token)) return 'kidney_transplant';
+  return null;
+}
+
+function normalizeMealPlannerLabStatus(value: any): MealPlannerLabStatus {
+  const token = normalizeTokenValue(value);
+  if (['low', 'hypo', 'below_range'].includes(token)) return 'low';
+  if (['normal', 'within_range', 'controlled'].includes(token)) return 'normal';
+  if (['high', 'hyper', 'above_range', 'elevated'].includes(token)) return 'high';
+  return 'unknown';
+}
+
+function buildMealPlannerCkdProfile(reqBody: any, healthConditions: string[], submittedWeightKg: number | null): MealPlannerCkdProfile {
+  const enabled = healthConditions.includes('chronic_kidney_disease');
+  const raw = reqBody?.ckdProfile && typeof reqBody.ckdProfile === 'object'
+    ? reqBody.ckdProfile
+    : reqBody?.clinicalProfile?.ckd && typeof reqBody.clinicalProfile.ckd === 'object'
+      ? reqBody.clinicalProfile.ckd
+      : {};
+
+  const idealWeightKg = mealPlannerOptionalPositiveNumber(raw.idealBodyWeightKg ?? reqBody?.idealBodyWeightKg);
+  const actualWeightKg = mealPlannerOptionalPositiveNumber(raw.weightKg ?? submittedWeightKg ?? reqBody?.weightKg);
+
+  return {
+    enabled,
+    stage: enabled ? normalizeMealPlannerCkdStage(raw.stage ?? reqBody?.ckdStage) : null,
+    treatment: enabled
+      ? normalizeMealPlannerCkdTreatment(raw.treatment ?? raw.dialysisStatus ?? reqBody?.dialysisStatus)
+      : null,
+    metabolicallyStable: enabled
+      ? mealPlannerOptionalBoolean(raw.metabolicallyStable ?? reqBody?.metabolicallyStable)
+      : null,
+    referenceWeightKg: enabled ? (idealWeightKg ?? actualWeightKg) : null,
+    referenceWeightType: enabled ? (idealWeightKg ? 'ideal' : (actualWeightKg ? 'submitted' : null)) : null,
+    serumPotassiumStatus: enabled
+      ? normalizeMealPlannerLabStatus(raw.serumPotassiumStatus ?? raw.potassiumStatus ?? reqBody?.serumPotassiumStatus)
+      : 'unknown',
+    serumPhosphorusStatus: enabled
+      ? normalizeMealPlannerLabStatus(raw.serumPhosphorusStatus ?? raw.phosphorusStatus ?? reqBody?.serumPhosphorusStatus)
+      : 'unknown',
+    prescribedProteinGrams: enabled
+      ? mealPlannerOptionalPositiveNumber(raw.prescribedProteinGrams ?? reqBody?.prescribedProteinGrams)
+      : null,
+    prescribedProteinGPerKg: enabled
+      ? mealPlannerOptionalPositiveNumber(raw.prescribedProteinGPerKg ?? reqBody?.prescribedProteinGPerKg)
+      : null,
+    prescribedSodiumMg: enabled
+      ? mealPlannerOptionalPositiveNumber(raw.prescribedSodiumMg ?? reqBody?.prescribedSodiumMg)
+      : null,
+    prescribedPotassiumMg: enabled
+      ? mealPlannerOptionalPositiveNumber(raw.prescribedPotassiumMg ?? reqBody?.prescribedPotassiumMg)
+      : null,
+    prescribedPhosphorusMg: enabled
+      ? mealPlannerOptionalPositiveNumber(raw.prescribedPhosphorusMg ?? reqBody?.prescribedPhosphorusMg)
+      : null,
+    prescribedFluidLimitMl: enabled
+      ? mealPlannerOptionalPositiveNumber(raw.prescribedFluidLimitMl ?? raw.fluidLimitMl ?? reqBody?.prescribedFluidLimitMl)
+      : null,
+    clinicianNotes: enabled ? String(raw.clinicianNotes ?? reqBody?.ckdClinicianNotes ?? '').trim().slice(0, 1000) : '',
+  };
+}
+
+function buildMealPlannerHealthRuleContext(profile: any, requestedTargets: any, goal: any, diet: string): MealPlannerHealthRuleContext {
+  const conditions = Array.isArray(profile?.healthConditions) ? profile.healthConditions : [];
+  const targets = requestedTargets && typeof requestedTargets === 'object' ? { ...requestedTargets } : {};
+  const ckd = profile?.ckdProfile as MealPlannerCkdProfile;
+  const hardAvoidKeywords: string[] = [];
+  const promptRules: string[] = [];
+  const cautions: string[] = [];
+  const validationErrors: string[] = [];
+  const limits: Record<string, any> = {};
+  let effectiveDiet = normalizeDietType(diet);
+
+  if (conditions.includes('hypertension')) {
+    const sodiumMg = Math.round(mealPlannerOptionalPositiveNumber(targets.sodiumMg) ?? 2000);
+    targets.sodiumMg = Math.min(sodiumMg, 2300);
+    limits.sodiumMg = targets.sodiumMg;
+    hardAvoidKeywords.push('bagoong', 'patis', 'fish sauce', 'regular soy sauce', 'salted fish', 'instant noodles', 'processed meat', 'hotdog', 'ham', 'bacon', 'longganisa');
+    promptRules.push(`Hypertension: use a DASH-style pattern and keep sodium at or below ${targets.sodiumMg} mg/day; prefer fresh foods, vegetables, fruit, whole grains, legumes, fish or lean poultry, and unsalted preparation.`);
+  }
+
+  if (conditions.includes('diabetes')) {
+    const dailyCarbs = mealPlannerOptionalPositiveNumber(targets.carbs) ?? 250;
+    limits.dailyCarbs = dailyCarbs;
+    limits.mainMealCarbCap = Math.round(dailyCarbs * 0.40);
+    limits.snackCarbCap = Math.round(dailyCarbs * 0.15);
+    hardAvoidKeywords.push('sugar-sweetened', 'soft drink', 'soda', 'sweetened juice', 'condensed milk', 'corn syrup', 'candy', 'halo-halo', 'ice cream', 'cake');
+    promptRules.push('Diabetes: distribute carbohydrates consistently across meals, pair carbohydrate foods with protein or fiber, prefer minimally processed high-fiber carbohydrates, and exclude sugar-sweetened drinks and heavily sweetened desserts. Do not invent medication-specific advice.');
+  }
+
+  if (conditions.includes('obesity_overweight')) {
+    const dailyCalories = mealPlannerOptionalPositiveNumber(targets.calories) ?? 2000;
+    limits.dailyCalories = dailyCalories;
+    limits.mainMealCalorieCap = Math.round(dailyCalories * 0.42);
+    limits.snackCalorieCap = Math.round(dailyCalories * 0.15);
+    hardAvoidKeywords.push('deep fried', 'crispy pork', 'bagnet', 'chicharon', 'lechon', 'pork belly', 'sugar-sweetened', 'soft drink', 'oversized');
+    promptRules.push('Obesity/overweight: keep total energy and portions aligned with the submitted calorie target; favor vegetables, fruit, whole grains, legumes, lean proteins, soups, grilled or steamed dishes, and higher-fiber foods instead of energy-dense fried or sugary choices.');
+  }
+
+  if (conditions.includes('dyslipidemia_cardiovascular')) {
+    const dailyCalories = mealPlannerOptionalPositiveNumber(targets.calories) ?? 2000;
+    limits.saturatedFatPercent = 6;
+    limits.saturatedFatCalories = Math.round(dailyCalories * 0.06);
+    hardAvoidKeywords.push('lard', 'pork belly', 'liempo', 'bagnet', 'lechon', 'chicharon', 'butter', 'cream', 'processed meat', 'deep fried', 'coconut cream');
+    promptRules.push('Dyslipidemia/cardiovascular: minimize saturated and trans fat, processed meat, fatty red meat, and deep-fried food; prefer vegetables, whole grains, legumes, fish, lean poultry, and unsaturated cooking oils.');
+  }
+
+  if (ckd?.enabled) {
+    if (!ckd.stage) validationErrors.push('CKD stage is required: G1, G2, G3A, G3B, G4, or G5.');
+    if (!ckd.treatment) validationErrors.push('CKD treatment status is required: not_on_dialysis, hemodialysis, peritoneal_dialysis, or kidney_transplant.');
+    if (!ckd.referenceWeightKg) validationErrors.push('A valid body weight in kilograms is required to calculate the CKD protein target.');
+    if (ckd.metabolicallyStable === null) validationErrors.push('CKD metabolic stability must be specified.');
+    if (ckd.metabolicallyStable === false && !ckd.prescribedProteinGrams && !ckd.prescribedProteinGPerKg) {
+      validationErrors.push('A clinician-prescribed protein target is required when the CKD patient is not metabolically stable.');
+    }
+    if (ckd.treatment === 'kidney_transplant' && !ckd.prescribedProteinGrams && !ckd.prescribedProteinGPerKg) {
+      validationErrors.push('A clinician-prescribed protein target is required for kidney-transplant meal planning.');
+    }
+
+    if (ckd.referenceWeightKg) {
+      const isDialysis = ckd.treatment === 'hemodialysis' || ckd.treatment === 'peritoneal_dialysis';
+      const defaultGPerKg = isDialysis ? 1.1 : 0.8;
+      const prescribedGPerKg = ckd.prescribedProteinGPerKg;
+      const proteinGrams = Math.round(
+        ckd.prescribedProteinGrams
+        ?? ckd.referenceWeightKg * (prescribedGPerKg ?? defaultGPerKg)
+      );
+      targets.protein = proteinGrams;
+      targets.ckdProteinGPerKg = Math.round((proteinGrams / ckd.referenceWeightKg) * 100) / 100;
+      targets.ckdReferenceWeightKg = ckd.referenceWeightKg;
+      targets.ckdProteinTargetSource = ckd.prescribedProteinGrams || prescribedGPerKg
+        ? 'clinician_prescribed'
+        : isDialysis ? 'dialysis_default' : 'non_dialysis_default';
+      limits.dailyProtein = proteinGrams;
+      limits.mainMealProteinCap = Math.max(6, Math.round(proteinGrams * 0.38));
+      limits.snackProteinCap = Math.max(2, Math.round(proteinGrams * 0.12));
+    }
+
+    targets.sodiumMg = Math.round(ckd.prescribedSodiumMg ?? Math.min(mealPlannerOptionalPositiveNumber(targets.sodiumMg) ?? 2000, 2000));
+    limits.sodiumMg = targets.sodiumMg;
+    targets.potassiumMg = ckd.prescribedPotassiumMg ?? targets.potassiumMg ?? null;
+    targets.phosphorusMg = ckd.prescribedPhosphorusMg ?? targets.phosphorusMg ?? null;
+    targets.fluidLimitMl = ckd.prescribedFluidLimitMl ?? targets.fluidLimitMl ?? null;
+
+    hardAvoidKeywords.push('bagoong', 'patis', 'fish sauce', 'regular soy sauce', 'bouillon cube', 'instant noodles', 'canned meat', 'processed meat', 'salted fish', 'dilis', 'sardines');
+    if (ckd.serumPotassiumStatus === 'high' || ckd.prescribedPotassiumMg) {
+      hardAvoidKeywords.push('potassium salt substitute', 'coconut water', 'banana', 'saba banana', 'kamote', 'sweet potato', 'potato', 'avocado');
+    }
+    if (ckd.serumPhosphorusStatus === 'high' || ckd.prescribedPhosphorusMg) {
+      hardAvoidKeywords.push('cola', 'processed cheese', 'organ meat', 'chicken liver', 'protein powder', 'phosphate additive');
+    }
+
+    if (effectiveDiet === 'high_protein') {
+      effectiveDiet = '';
+      cautions.push('The selected high-protein diet was overridden because CKD protein targets take priority.');
+    }
+
+    promptRules.push(`CKD: stage ${ckd.stage || 'missing'}, treatment ${ckd.treatment || 'missing'}, metabolically stable ${ckd.metabolicallyStable === null ? 'missing' : ckd.metabolicallyStable ? 'yes' : 'no'}. Daily protein must stay near ${targets.protein ?? 'the clinician-prescribed'} g and sodium at or below ${targets.sodiumMg} mg. A muscle-gain or high-protein goal must never override this limit.`);
+    promptRules.push(ckd.prescribedPotassiumMg
+      ? `Keep potassium near the clinician-prescribed ${Math.round(ckd.prescribedPotassiumMg)} mg/day.`
+      : ckd.serumPotassiumStatus === 'high'
+        ? 'Use lower-potassium choices and avoid potassium-based salt substitutes.'
+        : 'Do not impose a blanket potassium restriction because no high laboratory result or prescribed limit was supplied.');
+    promptRules.push(ckd.prescribedPhosphorusMg
+      ? `Keep phosphorus near the clinician-prescribed ${Math.round(ckd.prescribedPhosphorusMg)} mg/day.`
+      : ckd.serumPhosphorusStatus === 'high'
+        ? 'Reduce phosphate additives and high-phosphorus processed foods.'
+        : 'Do not impose a blanket phosphorus restriction because no high laboratory result or prescribed limit was supplied.');
+    promptRules.push(ckd.prescribedFluidLimitMl
+      ? `Keep listed fluids within the clinician-prescribed ${Math.round(ckd.prescribedFluidLimitMl)} ml/day.`
+      : 'Do not invent a fluid restriction; fluid limits require kidney-team direction.');
+    cautions.push('CKD meal plans require nephrologist or renal-dietitian review, especially when potassium, phosphorus, fluid, nutrition status, or dialysis needs change.');
+  }
+
+  return {
+    conditions,
+    effectiveTargets: targets,
+    effectiveDiet,
+    hardAvoidKeywords: uniqueStrings(hardAvoidKeywords.map((value) => value.toLowerCase())),
+    promptRules,
+    cautions,
+    validationErrors,
+    limits,
+    ckdProfile: ckd,
+  };
+}
+
+function buildMealPlannerHealthConditionPromptBlock(profile: any, context: MealPlannerHealthRuleContext): string {
+  if (!context || context.conditions.length === 0) return 'No condition-specific nutrition protocol is active.';
+  return `
+CONDITION-SPECIFIC HARD RULES:
+${context.promptRules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}
+- Every ingredient must contain a numeric gram or milliliter amount. Every meal must include servingSizeGrams and a matching portion label.
+- Condition rules override generic diet, goal, lifestyle, or bodybuilding instructions when they conflict.
+- These rules support meal planning and do not replace individualized medical nutrition therapy.
+${context.cautions.length ? `CAUTIONS:\n${context.cautions.map((value) => `- ${value}`).join('\n')}` : ''}`;
 }
 
 function normalizeMealPlannerProfile(reqBody: any, normalizedDiet: string, allRestrictionTokens: string[]) {
   const demographicsRaw = reqBody?.demographics && typeof reqBody.demographics === 'object' ? reqBody.demographics : {};
   const socioeconomicRaw = reqBody?.socioeconomic && typeof reqBody.socioeconomic === 'object' ? reqBody.socioeconomic : {};
   const lifestyleRaw = reqBody?.lifestyleFactors && typeof reqBody.lifestyleFactors === 'object' ? reqBody.lifestyleFactors : {};
+  const healthConditions = normalizeHealthConditions(reqBody?.healthConditions || reqBody?.healthCondition);
+  const submittedWeightKg = mealPlannerOptionalPositiveNumber(demographicsRaw.weightKg ?? reqBody?.weightKg);
 
   return {
     demographics: {
       age: Number(demographicsRaw.age) || null,
       sex: normalizeTokenValue(demographicsRaw.sex || ''),
       heightCm: Number(demographicsRaw.heightCm) || null,
-      weightKg: Number(demographicsRaw.weightKg) || null,
+      weightKg: submittedWeightKg,
     },
-    healthConditions: normalizeHealthConditions(reqBody?.healthConditions || reqBody?.healthCondition),
+    healthConditions,
+    ckdProfile: buildMealPlannerCkdProfile(reqBody, healthConditions, submittedWeightKg),
     dietaryRestrictions: normalizeDietaryRestrictions(reqBody?.dietaryRestrictions),
     socioeconomic: {
       status: normalizeTokenValue(socioeconomicRaw.status || 'middle') || 'middle',
@@ -972,6 +1283,12 @@ function normalizeMealPlannerProfile(reqBody: any, normalizedDiet: string, allRe
       alcoholIntake: normalizeTokenValue(lifestyleRaw.alcoholIntake || 'none') || 'none',
     },
     diet: normalizedDiet,
+    requestedDiet: normalizedDiet,
+    healthRuleSummary: null as {
+      effectiveTargets: any;
+      effectiveDiet: string;
+      cautions: string[];
+    } | null,
     restrictionTokens: allRestrictionTokens,
   };
 }
@@ -983,7 +1300,7 @@ function getCitationIdsForProfile(profile: any, hasAllergies: boolean): string[]
   if (conditions.includes('diabetes')) ids.push('cdc_diabetes_meal_planning');
   if (conditions.includes('obesity_overweight')) ids.push('cdc_weight_activity');
   if (conditions.includes('dyslipidemia_cardiovascular')) ids.push('aha_cholesterol');
-  if (conditions.includes('chronic_kidney_disease')) ids.push('niddk_ckd');
+  if (conditions.includes('chronic_kidney_disease')) ids.push('niddk_ckd', 'kdigo_2024_ckd', 'kdoqi_ckd_nutrition');
   if (conditions.includes('allergy') || hasAllergies) ids.push('fda_food_allergies');
   return uniqueStrings(ids);
 }
@@ -994,7 +1311,7 @@ function selectCitations(citationIds: string[]): NutritionCitation[] {
     .filter(Boolean) as NutritionCitation[];
 }
 
-function buildNutritionProfilePromptBlock(profile: any, targets: any): string {
+function buildNutritionProfilePromptBlock(profile: any, targets: any, healthRuleContext?: MealPlannerHealthRuleContext): string {
   const conditions = Array.isArray(profile?.healthConditions) && profile.healthConditions.length > 0
     ? profile.healthConditions.join(', ')
     : 'none specified';
@@ -1002,6 +1319,7 @@ function buildNutritionProfilePromptBlock(profile: any, targets: any): string {
     ? profile.dietaryRestrictions.foodPreferences.join(', ')
     : 'none specified';
   const demo = profile?.demographics || {};
+  const context = healthRuleContext || buildMealPlannerHealthRuleContext(profile, targets, '', profile?.diet || '');
 
   return `
 User nutrition profile:
@@ -1010,13 +1328,8 @@ User nutrition profile:
 - Dietary restrictions: cultural ${profile?.dietaryRestrictions?.cultural || 'filipino'}, religious ${profile?.dietaryRestrictions?.religious || 'none'}, food preferences ${prefs}.
 - Budget: ${profile?.socioeconomic?.status || 'middle'}; daily budget PHP ${profile?.socioeconomic?.dailyBudgetPhp ?? 'not specified'}.
 - Lifestyle factors: physical activity ${profile?.lifestyleFactors?.physicalActivity || 'moderate'}, smoking ${profile?.lifestyleFactors?.smokingStatus || 'none'}, alcohol ${profile?.lifestyleFactors?.alcoholIntake || 'none'}.
-- Macro targets: ${targets?.calories ?? 2000} kcal, ${targets?.protein ?? 120}g protein, ${targets?.carbs ?? 250}g carbs, ${targets?.fats ?? 65}g fats.
-Clinical rules:
-- Hypertension: favor DASH-style, lower-sodium choices; avoid salty condiments, processed meats, and salty snacks.
-- Diabetes: use consistent carbohydrate portions, pair carbohydrates with protein/fiber, and avoid added sugars/refined grains when possible.
-- Obesity/overweight: keep portions aligned to calorie target and emphasize lean protein, vegetables, and filling whole foods.
-- Dyslipidemia/cardiovascular: limit fried foods and saturated/trans fat; prefer fish, legumes, vegetables, whole grains, and lean proteins.
-- Chronic kidney disease: avoid high-sodium choices and do not force high protein; potassium/phosphorus/protein limits vary by CKD stage, so keep a caution note.
+- Effective targets: ${context.effectiveTargets?.calories ?? 2000} kcal, ${context.effectiveTargets?.protein ?? 120}g protein, ${context.effectiveTargets?.carbs ?? 250}g carbs, ${context.effectiveTargets?.fats ?? 65}g fats.
+${buildMealPlannerHealthConditionPromptBlock(profile, context)}
 - Allergy: strictly avoid selected allergens and possible allergen ingredients.
 `;
 }
@@ -1037,32 +1350,188 @@ function buildEvidenceSummary(profile: any, targets: any, citationIds: string[])
   return notes;
 }
 
-function filterDishesByHealthProfile<T extends any>(source: T[], healthConditions: string[], foodPreferences: string[] = []): T[] {
+function filterDishesByHealthProfile<T extends any>(
+  source: T[],
+  healthConditions: string[],
+  foodPreferences: string[] = [],
+  profile?: any,
+  targets?: any,
+  healthRuleContext?: MealPlannerHealthRuleContext
+): T[] {
   if (!Array.isArray(source) || source.length === 0) return source;
   const conditions = Array.isArray(healthConditions) ? healthConditions : [];
-  const prefs = Array.isArray(foodPreferences) ? foodPreferences : [];
-  const avoidKeywords: string[] = [];
+  const context = healthRuleContext || buildMealPlannerHealthRuleContext(
+    profile || { healthConditions: conditions },
+    targets,
+    '',
+    profile?.diet || ''
+  );
+  const avoidKeywords = context.hardAvoidKeywords;
 
-  if (conditions.includes('hypertension') || prefs.includes('low_sodium')) {
-    avoidKeywords.push('soy sauce', 'toyo', 'patis', 'fish sauce', 'bagoong', 'salted', 'processed', 'ham', 'bacon', 'sausage', 'longganisa', 'hotdog');
-  }
-  if (conditions.includes('diabetes')) {
-    avoidKeywords.push('sugar', 'sweetened', 'syrup', 'condensed milk', 'dessert');
-  }
-  if (conditions.includes('obesity_overweight') || conditions.includes('dyslipidemia_cardiovascular') || prefs.includes('no_fried_foods')) {
-    avoidKeywords.push('deep fried', 'crispy', 'chicharon', 'bagnet', 'lechon', 'pork belly', 'lard');
-  }
-  if (conditions.includes('chronic_kidney_disease')) {
-    avoidKeywords.push('bagoong', 'patis', 'soy sauce', 'toyo', 'salted', 'processed', 'sardines');
-  }
-
-  if (avoidKeywords.length === 0) return source;
   const filtered = source.filter((dish: any) => {
     const hay = dishTextForFilter(dish);
-    return !avoidKeywords.some((kw) => hay.includes(kw));
+    if (avoidKeywords.some((keyword) => hay.includes(keyword))) return false;
+
+    const category = normalizeDishCategory(dish?.category);
+    const isSnack = category === 'snacks';
+    const protein = Number(dish?.protein ?? dish?.pro ?? 0);
+    const carbs = Number(dish?.carbs ?? dish?.carb ?? 0);
+    const fats = Number(dish?.fats ?? dish?.fat ?? 0);
+    const calories = calculateCaloriesFromMacros(protein, carbs, fats, Number(dish?.calories ?? dish?.cal ?? 0));
+
+    if (conditions.includes('chronic_kidney_disease') && Number.isFinite(protein) && protein > 0) {
+      const cap = isSnack ? context.limits.snackProteinCap : context.limits.mainMealProteinCap;
+      if (Number.isFinite(cap) && protein > cap * 1.20) return false;
+    }
+    if (conditions.includes('diabetes') && Number.isFinite(carbs) && carbs > 0) {
+      const cap = isSnack ? context.limits.snackCarbCap : context.limits.mainMealCarbCap;
+      if (Number.isFinite(cap) && carbs > cap * 1.15) return false;
+    }
+    if (conditions.includes('obesity_overweight') && Number.isFinite(calories) && calories > 0) {
+      const cap = isSnack ? context.limits.snackCalorieCap : context.limits.mainMealCalorieCap;
+      if (Number.isFinite(cap) && calories > cap * 1.15) return false;
+    }
+    if (conditions.includes('dyslipidemia_cardiovascular') && Number.isFinite(fats) && fats > 0) {
+      const dailyFats = Number(context.effectiveTargets?.fats);
+      const cap = isSnack ? dailyFats * 0.18 : dailyFats * 0.42;
+      if (Number.isFinite(cap) && cap > 0 && fats > cap) return false;
+    }
+
+    return true;
   });
 
+  // Medical filtering must never silently restore the original unsafe pool.
+  if (conditions.length > 0) return filtered;
   return filtered.length > 0 ? filtered : source;
+}
+
+interface MealPlannerHealthRuleViolation {
+  day: string;
+  mealSlot: string;
+  mealName: string;
+  reasons: string[];
+}
+
+function mealPlannerMealHealthViolationReasons(
+  meal: any,
+  mealSlot: string,
+  context: MealPlannerHealthRuleContext
+): string[] {
+  const reasons: string[] = [];
+  if (!context || !meal) return reasons;
+  const text = mealPlannerFoodText(meal);
+  const slot = String(mealSlot || '').toLowerCase();
+  const isSnack = slot.includes('snack');
+
+  for (const keyword of context.hardAvoidKeywords) {
+    if (keyword && text.includes(keyword)) reasons.push(`contains restricted item: ${keyword}`);
+  }
+
+  const protein = Number(meal?.protein ?? meal?.pro ?? 0);
+  const carbs = Number(meal?.carbs ?? meal?.carb ?? 0);
+  const fats = Number(meal?.fats ?? meal?.fat ?? 0);
+  const calories = caloriesFromMacrosWithFallback(meal);
+
+  if (context.conditions.includes('chronic_kidney_disease')) {
+    const cap = isSnack ? context.limits.snackProteinCap : context.limits.mainMealProteinCap;
+    if (Number.isFinite(cap) && protein > cap * 1.15) reasons.push(`protein ${Math.round(protein)} g exceeds the CKD meal cap ${Math.round(cap)} g`);
+  }
+  if (context.conditions.includes('diabetes')) {
+    const cap = isSnack ? context.limits.snackCarbCap : context.limits.mainMealCarbCap;
+    if (Number.isFinite(cap) && carbs > cap * 1.15) reasons.push(`carbohydrate ${Math.round(carbs)} g exceeds the per-meal diabetes distribution cap ${Math.round(cap)} g`);
+  }
+  if (context.conditions.includes('obesity_overweight')) {
+    const cap = isSnack ? context.limits.snackCalorieCap : context.limits.mainMealCalorieCap;
+    if (Number.isFinite(cap) && calories > cap * 1.15) reasons.push(`meal calories ${Math.round(calories)} exceed the portion cap ${Math.round(cap)} kcal`);
+  }
+  if (context.conditions.includes('dyslipidemia_cardiovascular')) {
+    const dailyFats = Number(context.effectiveTargets?.fats);
+    const cap = isSnack ? dailyFats * 0.18 : dailyFats * 0.42;
+    if (Number.isFinite(cap) && cap > 0 && fats > cap) reasons.push(`fat ${Math.round(fats)} g exceeds the cardiovascular meal cap ${Math.round(cap)} g`);
+  }
+
+  return uniqueStrings(reasons);
+}
+
+function mealPlannerFindWeekPlanHealthRuleViolations(
+  weekPlan: any[],
+  context: MealPlannerHealthRuleContext
+): MealPlannerHealthRuleViolation[] {
+  const violations: MealPlannerHealthRuleViolation[] = [];
+
+  for (const day of Array.isArray(weekPlan) ? weekPlan : []) {
+    const meals = day?.meals && typeof day.meals === 'object' ? day.meals : {};
+    for (const [mealSlot, meal] of Object.entries(meals)) {
+      const reasons = mealPlannerMealHealthViolationReasons(meal, mealSlot, context);
+      if (reasons.length > 0) {
+        violations.push({
+          day: String(day?.day || ''),
+          mealSlot,
+          mealName: String((meal as any)?.name || meal || ''),
+          reasons,
+        });
+      }
+    }
+
+    if (context.conditions.includes('chronic_kidney_disease')) {
+      const totals = sumMacros(Object.values(meals));
+      const target = Number(context.effectiveTargets?.protein);
+      if (Number.isFinite(target) && target > 0 && totals.protein > target * 1.10) {
+        const highest = Object.entries(meals).sort((a: any, b: any) => Number(b[1]?.protein || 0) - Number(a[1]?.protein || 0))[0];
+        if (highest) {
+          violations.push({
+            day: String(day?.day || ''),
+            mealSlot: highest[0],
+            mealName: String((highest[1] as any)?.name || ''),
+            reasons: [`daily protein ${Math.round(totals.protein)} g exceeds the CKD target ${Math.round(target)} g`],
+          });
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
+function mealPlannerReplaceHealthUnsafeMeals(
+  weekPlan: any[],
+  safeDishes: any[],
+  context: MealPlannerHealthRuleContext
+): any[] {
+  const shuffled = mealPlannerShuffle(Array.isArray(safeDishes) ? safeDishes : []);
+  const usedNames = new Set<string>();
+  for (const day of Array.isArray(weekPlan) ? weekPlan : []) {
+    for (const meal of Object.values(day?.meals || {})) {
+      const name = String((meal as any)?.name || meal || '').trim().toLowerCase();
+      if (name) usedNames.add(name);
+    }
+  }
+
+  return (Array.isArray(weekPlan) ? weekPlan : []).map((day) => {
+    const nextMeals: Record<string, any> = { ...(day?.meals || {}) };
+    for (const [slot, meal] of Object.entries(nextMeals)) {
+      if (mealPlannerMealHealthViolationReasons(meal, slot, context).length === 0) continue;
+
+      const candidates = shuffled.filter((dish) => {
+        const name = String(dish?.name || '').trim().toLowerCase();
+        if (!name || usedNames.has(name)) return false;
+        if (!mealPlannerDishFitsSlot(dish, slot)) return false;
+        const candidate = createMealObject(dish);
+        return mealPlannerMealHealthViolationReasons(candidate, slot, context).length === 0;
+      });
+
+      const replacement = candidates[0];
+      if (replacement) {
+        const replacementMeal = createMealObject(replacement);
+        nextMeals[slot] = {
+          ...replacementMeal,
+          personalizationReason: `Replaced to satisfy ${context.conditions.join(', ')} nutrition safeguards.`,
+        };
+        usedNames.add(String(replacement?.name || '').trim().toLowerCase());
+      }
+    }
+    return { ...day, meals: nextMeals };
+  });
 }
 
 function buildMealSuitability(meal: any, profile: any, citationIds: string[]) {
@@ -1506,10 +1975,11 @@ function addRiceSidesToMeals(weekPlan: any[]) {
         protein: (updatedMeals.lunch.protein || 0) + randomRice.protein,
         fats: (updatedMeals.lunch.fats || 0) + randomRice.fats,
         ingredients: Array.isArray(updatedMeals.lunch.ingredients) 
-          ? [...updatedMeals.lunch.ingredients, 'Garlic Fried Rice or Steamed Rice'] 
-          : ['Garlic Fried Rice or Steamed Rice']
+          ? [...updatedMeals.lunch.ingredients, '150 g cooked rice'] 
+          : ['150 g cooked rice']
       };
       updatedMeals.lunch.calories = caloriesFromMacrosWithFallback(updatedMeals.lunch);
+      updatedMeals.lunch = ensureMealServingMetadata(updatedMeals.lunch);
     }
     
     // Add rice to dinner if not already included
@@ -1522,10 +1992,11 @@ function addRiceSidesToMeals(weekPlan: any[]) {
         protein: (updatedMeals.dinner.protein || 0) + randomRice.protein,
         fats: (updatedMeals.dinner.fats || 0) + randomRice.fats,
         ingredients: Array.isArray(updatedMeals.dinner.ingredients)
-          ? [...updatedMeals.dinner.ingredients, 'Garlic Fried Rice or Steamed Rice']
-          : ['Garlic Fried Rice or Steamed Rice']
+          ? [...updatedMeals.dinner.ingredients, '150 g cooked rice']
+          : ['150 g cooked rice']
       };
       updatedMeals.dinner.calories = caloriesFromMacrosWithFallback(updatedMeals.dinner);
+      updatedMeals.dinner = ensureMealServingMetadata(updatedMeals.dinner);
     }
     
     // Recalculate totals
@@ -1548,19 +2019,28 @@ function scaleMealPortion(meal: any, factor: number) {
 
   const scaled: any = { ...meal };
   const scaleField = (key: string) => {
-    const v = Number((scaled as any)[key] ?? 0);
-    if (Number.isFinite(v)) (scaled as any)[key] = Math.round(v * f);
+    const value = Number(scaled[key] ?? 0);
+    if (Number.isFinite(value)) scaled[key] = Math.round(value * f);
   };
 
   scaleField('protein');
   scaleField('carbs');
   scaleField('fats');
   scaleField('fiber');
-  scaled.calories = caloriesFromMacrosWithFallback(scaled);
-  // Keep UI wording simple and consistent.
-  scaled.portionSize = '1 serving';
+  scaled.ingredients = Array.isArray(scaled.ingredients)
+    ? scaled.ingredients.map((item: string) => mealPlannerScaleMeasuredIngredient(item, f))
+    : [];
 
-  return scaled;
+  const explicitServing = mealPlannerOptionalPositiveNumber(
+    scaled.servingSizeGrams ?? scaled.portionGrams ?? scaled.serving_size_g
+  );
+  if (explicitServing) {
+    scaled.servingSizeGrams = Math.max(1, Math.round(explicitServing * f));
+    scaled.portionGrams = scaled.servingSizeGrams;
+  }
+
+  scaled.calories = caloriesFromMacrosWithFallback(scaled);
+  return ensureMealServingMetadata(scaled);
 }
 
 function scaleWeekPlanToCalorieTarget(weekPlan: any[], targets: any) {
@@ -1635,17 +2115,18 @@ async function enhanceAIWeekPlanWithDetails(parsedWeekPlan: any[], dishes: any[]
           ingredients = String(dish.ingredients || "").split(",").map((s: string) => s.trim()).filter(Boolean);
         }
 
-        enrichedMeals[mealType] = {
+        enrichedMeals[mealType] = createMealObject({
+          ...dish,
           name: dish.name,
           ingredients,
-          portionSize: dish.portion_size || "1 serving",
+          servingSizeGrams: dish.serving_size_grams ?? dish.serving_size_g ?? dish.portion_grams,
           calories: Number(dish.calories ?? dish.cal ?? 0),
           protein: Number(dish.protein ?? dish.pro ?? 0),
           carbs: Number(dish.carbs ?? dish.carb ?? 0),
           fats: Number(dish.fats ?? dish.fat ?? 0),
           fiber: Number(dish.fiber ?? 0),
-          recipe: dish.recipe || (mealValue && (mealValue as any).recipe) || ""
-        };
+          recipe: dish.recipe || (mealValue && (mealValue as any).recipe) || ''
+        });
       } else {
         if (typeof mealValue === "object" && mealValue !== null) {
           enrichedMeals[mealType] = createMealObject(mealValue);
@@ -1765,6 +2246,188 @@ function recipeNeedsUpgrade(recipe: string): boolean {
   return steps < 4;
 }
 
+
+function mealPlannerIngredientLooksLikeProtein(value: string): boolean {
+  return /\b(chicken|pork|beef|fish|bangus|tilapia|tuna|salmon|sardine|shrimp|hipon|crab|egg|itlog|tofu|tokwa|tempeh|monggo|mung|beans?|lentils?|milk|cheese|yogurt|whey|protein powder|meat)\b/i.test(value);
+}
+
+function mealPlannerScaleMeasuredIngredient(value: string, factor: number): string {
+  const text = String(value || '').trim();
+  const parentheticalEgg = text.match(/^\d+(?:\.\d+)?\s+.*?\((\d+(?:\.\d+)?)\s*g\)(.*)$/i);
+  if (parentheticalEgg) {
+    const grams = Math.max(1, Math.round(Number(parentheticalEgg[1]) * factor));
+    return `${grams} g ${text.replace(/^\d+(?:\.\d+)?\s+/, '').replace(/\s*\(\d+(?:\.\d+)?\s*g\)/i, '')}`.trim();
+  }
+
+  const match = text.match(/^(\d+(?:\.\d+)?)\s*(kg|g|mg|l|ml|tbsp|tsp|cup|cups|pc|pcs|piece|pieces|clove|cloves|slice|slices)\b(.*)$/i);
+  if (!match) return text;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return text;
+  const scaled = Math.max(0.1, amount * factor);
+  const rounded = scaled >= 10 ? Math.round(scaled) : Math.round(scaled * 10) / 10;
+  return `${rounded} ${match[2]}${match[3]}`.trim();
+}
+
+function mealPlannerIngredientWeightGrams(value: string): number {
+  const text = String(value || '').trim();
+  const parenthetical = text.match(/\((\d+(?:\.\d+)?)\s*g\)/i);
+  if (parenthetical) return Number(parenthetical[1]);
+
+  const match = text.match(/^(\d+(?:\.\d+)?)\s*(kg|g|mg|l|ml|tbsp|tsp|cup|cups|pc|pcs|piece|pieces|clove|cloves|slice|slices)\b/i);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const multipliers: Record<string, number> = {
+    kg: 1000, g: 1, mg: 0.001, l: 1000, ml: 1,
+    tbsp: 15, tsp: 5, cup: 240, cups: 240,
+    pc: 50, pcs: 50, piece: 50, pieces: 50,
+    clove: 3, cloves: 3, slice: 25, slices: 25,
+  };
+  return amount * (multipliers[unit] || 0);
+}
+
+function ensureMealServingMetadata(meal: any): any {
+  if (!meal || typeof meal !== 'object') return meal;
+  const mealName = String(meal.name || 'Meal');
+  const ingredients = normalizeDetailedIngredients(
+    Array.isArray(meal.ingredients) ? meal.ingredients.map(String) : [],
+    mealName
+  );
+  const computedWeight = ingredients.reduce((sum, item) => sum + mealPlannerIngredientWeightGrams(item), 0);
+  const explicitWeight = mealPlannerOptionalPositiveNumber(
+    meal.servingSizeGrams ?? meal.serving_size_g ?? meal.serving_size_grams ?? meal.portionGrams ?? meal.portion_grams
+  );
+  const servingWeightIsEstimated = !explicitWeight;
+  const servingSizeGrams = Math.max(1, Math.round(explicitWeight ?? (computedWeight || 1)));
+  const portionSize = servingWeightIsEstimated
+    ? `1 serving (approximately ${servingSizeGrams} g prepared portion)`
+    : `1 serving (${servingSizeGrams} g prepared portion)`;
+
+  return {
+    ...meal,
+    ingredients,
+    servingSizeGrams,
+    portionGrams: servingSizeGrams,
+    portionSize,
+    portion: portionSize,
+    servingWeightIsEstimated,
+    ingredientMeasurementsValidated: true,
+    nutrientBasis: 'Macros apply to the listed measured serving.',
+  };
+}
+
+function ensureWeekPlanServingMetadata(weekPlan: any[]): any[] {
+  return (Array.isArray(weekPlan) ? weekPlan : []).map((day: any) => {
+    const meals = day?.meals && typeof day.meals === 'object' ? day.meals : {};
+    const nextMeals = Object.entries(meals).reduce((acc: Record<string, any>, [key, meal]) => {
+      acc[key] = ensureMealServingMetadata(meal);
+      return acc;
+    }, {});
+    return { ...day, meals: nextMeals };
+  });
+}
+
+function mealPlannerAddMeasuredEnergyForCalories(meal: any, calorieGap: number, profile?: any): any {
+  if (!meal || calorieGap <= 5) return meal;
+  const ingredients = Array.isArray(meal.ingredients) ? [...meal.ingredients] : [];
+  const hasDiabetes = Array.isArray(profile?.healthConditions) && profile.healthConditions.includes('diabetes');
+
+  if (hasDiabetes) {
+    const oilMl = Math.max(1, Math.round(calorieGap / 9));
+    ingredients.push(`${oilMl} ml canola oil (energy adjustment)`);
+    return { ...meal, ingredients, fats: Math.round((Number(meal.fats) || 0) + calorieGap / 9) };
+  }
+
+  const addedCarbs = Math.max(0, calorieGap / 4);
+  const riceGrams = Math.max(10, Math.round(addedCarbs / 0.28));
+  ingredients.push(`${riceGrams} g cooked white rice (energy adjustment)`);
+  return { ...meal, ingredients, carbs: Math.round((Number(meal.carbs) || 0) + addedCarbs) };
+}
+
+function enforceMealPlannerCkdProteinTargets(weekPlan: any[], profile: any, context: MealPlannerHealthRuleContext): any[] {
+  const ckd = profile?.ckdProfile as MealPlannerCkdProfile | undefined;
+  const dailyProteinTarget = Number(context?.effectiveTargets?.protein);
+  if (!ckd?.enabled || !Number.isFinite(dailyProteinTarget) || dailyProteinTarget <= 0) {
+    return ensureWeekPlanServingMetadata(weekPlan);
+  }
+
+  const adjusted = (Array.isArray(weekPlan) ? weekPlan : []).map((day: any) => {
+    const meals = day?.meals && typeof day.meals === 'object' ? day.meals : {};
+    const entries = Object.entries(meals);
+    const currentProtein = entries.reduce((sum, [, meal]: any) => sum + (Number(meal?.protein) || 0), 0);
+    if (currentProtein <= 0 || currentProtein <= dailyProteinTarget * 1.05) return day;
+
+    const factor = Math.min(1, Math.max(0.25, dailyProteinTarget / currentProtein));
+    const nextMeals: Record<string, any> = {};
+
+    for (const [slot, rawMeal] of entries) {
+      const meal: any = rawMeal && typeof rawMeal === 'object' ? { ...(rawMeal as any) } : createMealObject(rawMeal);
+      const originalCalories = caloriesFromMacrosWithFallback(meal);
+      const ingredients = Array.isArray(meal.ingredients)
+        ? meal.ingredients.map((item: string) => mealPlannerIngredientLooksLikeProtein(item)
+          ? mealPlannerScaleMeasuredIngredient(item, factor)
+          : item)
+        : [];
+
+      let adjustedMeal: any = {
+        ...meal,
+        ingredients,
+        protein: Math.max(0, Math.round((Number(meal.protein) || 0) * factor)),
+        renalProteinAdjusted: true,
+      };
+      adjustedMeal.calories = caloriesFromMacrosWithFallback(adjustedMeal);
+      adjustedMeal = mealPlannerAddMeasuredEnergyForCalories(adjustedMeal, originalCalories - adjustedMeal.calories, profile);
+      adjustedMeal.calories = caloriesFromMacrosWithFallback(adjustedMeal);
+      nextMeals[slot] = ensureMealServingMetadata(adjustedMeal);
+    }
+
+    const totals = sumMacros(Object.values(nextMeals));
+    return {
+      ...day,
+      meals: nextMeals,
+      totalCalories: totals.calories,
+      totalProtein: totals.protein,
+      totalCarbs: totals.carbs,
+      totalFats: totals.fats,
+    };
+  });
+
+  return ensureWeekPlanServingMetadata(adjusted);
+}
+
+function finalizeMealForHealthProfile(
+  meal: any,
+  profile: any,
+  context: MealPlannerHealthRuleContext,
+  mealSlot: string
+): any {
+  let finalized = ensureMealServingMetadata(meal);
+  const ckd = profile?.ckdProfile as MealPlannerCkdProfile | undefined;
+  if (ckd?.enabled) {
+    const dailyTarget = Number(context?.effectiveTargets?.protein);
+    const slot = String(mealSlot || '').toLowerCase();
+    const fraction = slot.includes('snack') ? 0.12 : slot === 'breakfast' ? 0.25 : 0.35;
+    const cap = Math.max(3, dailyTarget * fraction);
+    const currentProtein = Number(finalized.protein) || 0;
+    if (Number.isFinite(cap) && currentProtein > cap * 1.05) {
+      const factor = Math.max(0.25, cap / currentProtein);
+      const originalCalories = caloriesFromMacrosWithFallback(finalized);
+      finalized = {
+        ...finalized,
+        protein: Math.round(currentProtein * factor),
+        ingredients: finalized.ingredients.map((item: string) => mealPlannerIngredientLooksLikeProtein(item)
+          ? mealPlannerScaleMeasuredIngredient(item, factor)
+          : item),
+        renalProteinAdjusted: true,
+      };
+      finalized.calories = caloriesFromMacrosWithFallback(finalized);
+      finalized = mealPlannerAddMeasuredEnergyForCalories(finalized, originalCalories - finalized.calories, profile);
+      finalized.calories = caloriesFromMacrosWithFallback(finalized);
+    }
+  }
+  return ensureMealServingMetadata(finalized);
+}
+
 function createMealObject(meal: any) {
   let ingredients: any = meal?.ingredients ?? meal?.ingredient ?? [];
   if (typeof ingredients === 'string') {
@@ -1772,11 +2435,9 @@ function createMealObject(meal: any) {
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          ingredients = parsed;
-        } else {
-          ingredients = raw.split(/[\r\n,;]+/).map((s) => s.trim()).filter(Boolean);
-        }
+        ingredients = Array.isArray(parsed)
+          ? parsed
+          : raw.split(/[\r\n,;]+/).map((s) => s.trim()).filter(Boolean);
       } catch {
         ingredients = raw.split(/[\r\n,;]+/).map((s) => s.trim()).filter(Boolean);
       }
@@ -1786,24 +2447,24 @@ function createMealObject(meal: any) {
   }
   if (!Array.isArray(ingredients)) ingredients = [];
 
-  const mealName = meal.name || "Unnamed Meal";
+  const mealName = meal?.name || 'Unnamed Meal';
   const normalizedIngredients = normalizeDetailedIngredients(ingredients, mealName);
-  const protein = Number(meal.protein ?? meal.pro ?? 0);
-  const carbs = Number(meal.carbs ?? meal.carb ?? 0);
-  const fats = Number(meal.fats ?? meal.fat ?? 0);
-  const fallbackCalories = Number(meal.calories ?? meal.cal ?? 0);
+  const protein = Number(meal?.protein ?? meal?.pro ?? 0);
+  const carbs = Number(meal?.carbs ?? meal?.carb ?? 0);
+  const fats = Number(meal?.fats ?? meal?.fat ?? 0);
+  const fallbackCalories = Number(meal?.calories ?? meal?.cal ?? 0);
 
-  return {
+  return ensureMealServingMetadata({
+    ...meal,
     name: mealName,
     ingredients: normalizedIngredients,
-    portionSize: meal.portionSize || "1 serving",
     calories: calculateCaloriesFromMacros(protein, carbs, fats, fallbackCalories),
     protein,
     carbs,
     fats,
-    fiber: Number(meal.fiber ?? 0),
-    recipe: meal.recipe || DEFAULT_RECIPE_TEXT,
-  };
+    fiber: Number(meal?.fiber ?? 0),
+    recipe: meal?.recipe || DEFAULT_RECIPE_TEXT,
+  });
 }
 
 type ParsedIngredientQuantity = {
@@ -1970,28 +2631,249 @@ function getMealPrepTips(weekPlan: any[]) {
   return tips;
 }
 
-function getNutritionTips(goal: string) {
-  const normalizedGoal = (goal || "").toLowerCase();
+
+type MealPlannerHealthConditionTip = {
+  condition: string;
+  label: string;
+  summary: string;
+  whyMealPlanChanged: string[];
+  foodsToPrioritize: string[];
+  foodsToLimitOrAvoid: string[];
+  practicalTips: string[];
+  medicalNote: string;
+  citationIds: string[];
+};
+
+function buildMealPlannerHealthConditionTips(
+  profile: any,
+  healthRuleContext: MealPlannerHealthRuleContext
+): MealPlannerHealthConditionTip[] {
+  const conditions = Array.isArray(profile?.healthConditions) ? profile.healthConditions : [];
+  const context = healthRuleContext;
+  const tips: MealPlannerHealthConditionTip[] = [];
+
+  if (conditions.includes('hypertension')) {
+    tips.push({
+      condition: 'hypertension',
+      label: 'Hypertension',
+      summary: 'Blood pressure can be affected by sodium intake and the overall eating pattern.',
+      whyMealPlanChanged: [
+        `Meals were adjusted toward a DASH-style pattern and a sodium target of no more than ${context.effectiveTargets?.sodiumMg ?? 2000} mg/day.`,
+        'Fresh foods and measured seasonings are used so hidden sodium is easier to control.',
+      ],
+      foodsToPrioritize: [
+        'vegetables and fruits',
+        'whole grains and legumes',
+        'fish, skinless poultry, and other lean proteins',
+        'fresh herbs, garlic, ginger, vinegar, and calamansi for flavor',
+      ],
+      foodsToLimitOrAvoid: [
+        'bagoong, patis, regular soy sauce, and salty seasoning mixes',
+        'instant noodles, salted fish, canned or processed meats',
+        'hotdogs, ham, bacon, and longganisa',
+        'sugary drinks and heavily sweetened foods',
+      ],
+      practicalTips: [
+        'Check the sodium amount per serving on packaged-food labels.',
+        'Taste food before adding salt or salty condiments.',
+        'Use potassium-based salt substitutes only after asking a clinician, especially when kidney disease or certain medicines are present.',
+      ],
+      medicalNote: 'Blood-pressure targets and sodium needs may differ when other medical conditions are present.',
+      citationIds: ['aha_hypertension_dash', 'who_healthy_diet'],
+    });
+  }
+
+  if (conditions.includes('diabetes')) {
+    tips.push({
+      condition: 'diabetes',
+      label: 'Diabetes',
+      summary: 'The amount, type, and timing of carbohydrate foods can affect blood glucose.',
+      whyMealPlanChanged: [
+        'Carbohydrates were distributed across meals instead of being concentrated in one meal.',
+        'Carbohydrate foods were paired with protein, vegetables, or fiber to support a steadier meal pattern.',
+      ],
+      foodsToPrioritize: [
+        'non-starchy vegetables',
+        'lean protein such as fish, chicken, eggs, tofu, or legumes when appropriate',
+        'measured portions of rice, root crops, oats, or whole-grain foods',
+        'whole fruit instead of sweetened juice',
+      ],
+      foodsToLimitOrAvoid: [
+        'soft drinks, sweetened juice, milk tea, and other sugar-sweetened drinks',
+        'large portions of rice, noodles, bread, or desserts in one sitting',
+        'condensed milk, syrups, candy, cakes, and heavily sweetened snacks',
+      ],
+      practicalTips: [
+        'Use the plate method: about half non-starchy vegetables, one quarter lean protein, and one quarter carbohydrate food.',
+        'Keep meal timing and carbohydrate portions reasonably consistent.',
+        'Follow the glucose-monitoring and medicine instructions given by the diabetes care team.',
+      ],
+      medicalNote: 'Carbohydrate targets may need adjustment for insulin, diabetes medicines, pregnancy, kidney disease, or blood-glucose results.',
+      citationIds: ['cdc_diabetes_meal_planning'],
+    });
+  }
+
+  if (conditions.includes('obesity_overweight')) {
+    tips.push({
+      condition: 'obesity_overweight',
+      label: 'Obesity / Overweight',
+      summary: 'A sustainable calorie balance and repeatable habits are more useful than extreme restriction.',
+      whyMealPlanChanged: [
+        `Meal portions were kept near the submitted target of ${context.effectiveTargets?.calories ?? 2000} kcal/day.`,
+        'The plan favors filling, lower-energy-density foods to make the calorie target more practical.',
+      ],
+      foodsToPrioritize: [
+        'vegetables, whole fruit, and broth-based vegetable dishes',
+        'lean proteins and legumes',
+        'fiber-rich carbohydrates in measured portions',
+        'water or unsweetened drinks',
+      ],
+      foodsToLimitOrAvoid: [
+        'oversized portions and frequent second servings',
+        'deep-fried food, fatty pork, bagnet, chicharon, and lechon',
+        'sugary drinks, desserts, and highly processed snacks',
+      ],
+      practicalTips: [
+        'Use the listed gram weights rather than estimating portions by sight.',
+        'Choose cooking methods such as steaming, grilling, baking, boiling, or light sautéing.',
+        'Track progress gradually and avoid crash diets that are difficult to maintain.',
+      ],
+      medicalNote: 'Weight management can also be affected by medicines, sleep, stress, hormones, mobility, and other medical conditions.',
+      citationIds: ['cdc_weight_activity'],
+    });
+  }
+
+  if (conditions.includes('dyslipidemia_cardiovascular')) {
+    tips.push({
+      condition: 'dyslipidemia_cardiovascular',
+      label: 'Dyslipidemia / Cardiovascular Disease',
+      summary: 'Saturated fat, trans fat, sodium, and highly processed foods can work against heart-health goals.',
+      whyMealPlanChanged: [
+        'The plan uses leaner proteins and less frying to reduce saturated-fat-heavy choices.',
+        'Vegetables, legumes, whole grains, fish, and unsaturated oils are emphasized.',
+      ],
+      foodsToPrioritize: [
+        'fish, legumes, tofu, and skinless poultry',
+        'vegetables, fruits, and whole grains',
+        'measured amounts of canola, olive, or other unsaturated oils',
+        'grilled, steamed, boiled, or baked meals',
+      ],
+      foodsToLimitOrAvoid: [
+        'pork belly, liempo, bagnet, lechon, chicharon, and lard',
+        'processed meats such as bacon, ham, sausage, and hotdogs',
+        'butter, cream, coconut cream, and frequent deep-fried food',
+        'foods containing trans fat or partially hydrogenated oil',
+      ],
+      practicalTips: [
+        'Trim visible fat and remove poultry skin before cooking.',
+        'Read labels for saturated fat, trans fat, sodium, and serving size.',
+        'Use heart-healthy cooking methods instead of breading and deep frying.',
+      ],
+      medicalNote: 'Cholesterol and triglyceride goals should be reviewed together with medicines, laboratory results, and the cardiovascular care plan.',
+      citationIds: ['aha_cholesterol', 'who_healthy_diet'],
+    });
+  }
+
+  if (conditions.includes('chronic_kidney_disease')) {
+    const ckd = context.ckdProfile;
+    const proteinTarget = context.effectiveTargets?.protein;
+    const sodiumTarget = context.effectiveTargets?.sodiumMg ?? 2000;
+    const isDialysis = ckd?.treatment === 'hemodialysis' || ckd?.treatment === 'peritoneal_dialysis';
+    const potassiumRestricted = ckd?.serumPotassiumStatus === 'high' || !!ckd?.prescribedPotassiumMg;
+    const phosphorusRestricted = ckd?.serumPhosphorusStatus === 'high' || !!ckd?.prescribedPhosphorusMg;
+
+    const foodsToLimitOrAvoid = [
+      'bagoong, patis, regular soy sauce, salted fish, instant noodles, canned meat, and processed meat',
+      'protein powders, amino-acid supplements, and double-protein servings unless prescribed by the kidney team',
+    ];
+    if (potassiumRestricted) {
+      foodsToLimitOrAvoid.push('potassium salt substitutes and the high-potassium foods identified by the kidney team, such as coconut water, banana, potato, sweet potato, or avocado');
+    }
+    if (phosphorusRestricted) {
+      foodsToLimitOrAvoid.push('foods with phosphate additives, cola, processed cheese, organ meat, and other high-phosphorus foods identified by the kidney team');
+    }
+
+    const practicalTips = [
+      'Use the exact protein and serving weights shown in the plan instead of adding extra meat or supplements.',
+      'Check ingredient labels for sodium and words containing “phos” when phosphorus restriction is prescribed.',
+      potassiumRestricted
+        ? 'Follow the potassium limit supplied by the kidney team and current laboratory results.'
+        : 'Do not avoid all potassium-rich food automatically; potassium restriction depends on laboratory results and treatment.',
+      phosphorusRestricted
+        ? 'Follow the phosphorus limit supplied by the kidney team and current laboratory results.'
+        : 'Do not avoid all phosphorus-containing food automatically; phosphorus restriction depends on laboratory results and treatment.',
+      ckd?.prescribedFluidLimitMl
+        ? `Count drinks, soup, ice, and other liquids toward the prescribed ${Math.round(ckd.prescribedFluidLimitMl)} ml/day fluid limit.`
+        : 'Do not start a fluid restriction unless the kidney team has prescribed one.',
+    ];
+
+    tips.push({
+      condition: 'chronic_kidney_disease',
+      label: 'Chronic Kidney Disease',
+      summary: `Kidney nutrition needs vary by CKD stage, dialysis status, laboratory values, metabolic stability, and nutrition status. This plan uses stage ${ckd?.stage || 'not supplied'} and treatment ${ckd?.treatment || 'not supplied'}.`,
+      whyMealPlanChanged: [
+        `Protein was limited to approximately ${proteinTarget ?? 'the prescribed target'} g/day${isDialysis ? ' for the selected dialysis treatment' : ' instead of using a generic high-protein target'}.`,
+        `Sodium was limited to approximately ${sodiumTarget} mg/day.`,
+        potassiumRestricted
+          ? 'Potassium-related foods were limited because a high result or prescribed target was supplied.'
+          : 'A blanket low-potassium diet was not applied because no high result or prescribed potassium target was supplied.',
+        phosphorusRestricted
+          ? 'Phosphorus-related foods were limited because a high result or prescribed target was supplied.'
+          : 'A blanket low-phosphorus diet was not applied because no high result or prescribed phosphorus target was supplied.',
+      ],
+      foodsToPrioritize: [
+        'fresh, minimally processed, lower-sodium foods',
+        'measured portions of the protein foods listed in the plan',
+        'rice, vegetables, and fruits that fit the current potassium and phosphorus instructions',
+        'herbs, garlic, ginger, vinegar, and calamansi instead of salty seasonings',
+      ],
+      foodsToLimitOrAvoid,
+      practicalTips,
+      medicalNote: 'CKD meal plans must be reviewed as laboratory values, stage, dialysis treatment, appetite, body weight, swelling, and medicines change. A nephrologist or renal dietitian should set individualized protein, potassium, phosphorus, sodium, and fluid targets.',
+      citationIds: ['niddk_ckd', 'kdigo_2024_ckd', 'kdoqi_ckd_nutrition'],
+    });
+  }
+
+  return tips;
+}
+
+function getNutritionTips(goal: string, profile?: any, healthRuleContext?: MealPlannerHealthRuleContext) {
+  const context = healthRuleContext || buildMealPlannerHealthRuleContext(profile || {}, {}, goal, profile?.diet || '');
+  const conditionTips = buildMealPlannerHealthConditionTips(profile || {}, context);
+
+  // Keep the existing string[] response shape so current frontends continue to work.
+  if (conditionTips.length > 0) {
+    return conditionTips.flatMap((tip) => [
+      `${tip.label}: ${tip.summary}`,
+      `Why this meal plan was adjusted: ${tip.whyMealPlanChanged.join(' ')}`,
+      `Choose more often: ${tip.foodsToPrioritize.join('; ')}.`,
+      `Limit or avoid: ${tip.foodsToLimitOrAvoid.join('; ')}.`,
+      `Practical reminders: ${tip.practicalTips.join(' ')}`,
+      tip.medicalNote,
+    ]);
+  }
+
+  const normalizedGoal = (goal || '').toLowerCase();
   switch (normalizedGoal) {
-    case "muscle gain":
-    case "gain":
+    case 'muscle gain':
+    case 'gain':
       return [
-        "Increase protein intake at every meal (aim for 20–40g per meal).",
-        "Include a mix of fast-digesting carbs and protein post-workout (e.g., rice + chicken).",
-        "Use healthy fats (avocado, coconut, nuts) to increase calorie density."
+        'Increase protein intake at every meal within the submitted target.',
+        'Include a mix of carbohydrates and protein after training.',
+        'Use measured portions of unsaturated fats when more calories are needed.'
       ];
-    case "weight loss":
-    case "loss":
+    case 'weight loss':
+    case 'loss':
       return [
-        "Focus on lean proteins and vegetables to increase satiety.",
-        "Reduce portion sizes of calorie-dense foods and favor low-calorie volume foods (leafy greens, broth-based soups).",
-        "Avoid sugary beverages and reduce fried foods; use steamed or grilled methods."
+        'Focus on lean proteins and vegetables to increase satiety.',
+        'Use measured portions of energy-dense foods and favor higher-volume vegetables and broth-based dishes.',
+        'Avoid sugary beverages and reduce fried foods; use steamed or grilled methods.'
       ];
     default:
       return [
-        "Balance protein, carbs, and fats throughout the day.",
-        "Aim for whole foods and fiber-rich vegetables to maintain steady energy.",
-        "Drink plenty of water and keep sodium moderate to reduce water retention."
+        'Balance protein, carbohydrates, and fats throughout the day.',
+        'Aim for whole foods and fiber-rich vegetables to maintain steady energy.',
+        'Drink water regularly and keep sodium moderate.'
       ];
   }
 }
@@ -2128,6 +3010,7 @@ const MEAL_FILTER_KEYWORDS_BY_TOKEN: Record<string, string[]> = {
   no_beef: ['beef', 'baka', 'tapa', 'bulalo'],
   no_alcohol: ['alcohol', 'wine', 'beer'],
   no_fried_foods: ['fried', 'crispy', 'deep fry', 'prito', 'bagnet', 'chicharon'],
+  low_sugar: ['sugar-sweetened', 'soft drink', 'soda', 'sweetened juice', 'condensed milk', 'corn syrup', 'candy', 'halo-halo', 'ice cream', 'cake'],
 };
 
 function dishTextForFilter(dish: any): string {
@@ -2865,7 +3748,7 @@ function isFutureDateOnly(input?: string | null): boolean {
 // ============================================
 
 // Generate detailed ingredients + recipe instructions using OpenAI
-async function generateRecipePackage(mealName: string, ingredients: string[]): Promise<{ ingredients: string[]; recipe: string }> {
+async function generateRecipePackage(mealName: string, ingredients: string[], healthRulesText = ''): Promise<{ ingredients: string[]; recipe: string }> {
   const normalizedIngredients = normalizeDetailedIngredients(ingredients || [], mealName || 'Meal');
   const fallback = { ingredients: normalizedIngredients, recipe: DEFAULT_RECIPE_TEXT };
 
@@ -2879,7 +3762,7 @@ async function generateRecipePackage(mealName: string, ingredients: string[]): P
       messages: [
         {
           role: "system",
-          content: "You are a Filipino meal-planning and culinary expert. Output STRICT JSON only. Every ingredient must include exact amount + unit and specific type/variant (e.g., pork tocino, chicken tocino, canola oil). Prefer metric units (g, ml) and keep portions practical for one serving. Steps must be numbered, specific, and mention cooking times/heat when relevant."
+          content: `You are a Filipino meal-planning and culinary expert. Output STRICT JSON only. Every ingredient must include exact amount + unit and specific type/variant. Prefer metric units (g, ml) and keep portions practical for one serving. Steps must be numbered, specific, and mention cooking times/heat when relevant. ${healthRulesText}`
         },
         {
           role: "user",
@@ -2915,7 +3798,7 @@ async function generateRecipeInstructions(mealName: string, ingredients: string[
 }
 
 // Enrich week plan meals with recipes
-async function enrichWeekPlanWithRecipes(weekPlan: any[]): Promise<any[]> {
+async function enrichWeekPlanWithRecipes(weekPlan: any[], healthRulesText = ''): Promise<any[]> {
   if (!Array.isArray(weekPlan)) return weekPlan;
   
   return Promise.all(weekPlan.map(async (day) => {
@@ -2934,17 +3817,17 @@ async function enrichWeekPlanWithRecipes(weekPlan: any[]): Promise<any[]> {
       const mustUpgradeRecipe = recipeNeedsUpgrade(String(mealObj.recipe || ''));
 
       if (mustUpgradeIngredients || mustUpgradeRecipe) {
-        const pkg = await generateRecipePackage(mealObj.name || "Meal", existingIngredients);
-        enrichedMeals[mealType] = {
+        const pkg = await generateRecipePackage(mealObj.name || 'Meal', existingIngredients, healthRulesText);
+        enrichedMeals[mealType] = ensureMealServingMetadata({
           ...mealObj,
           ingredients: pkg.ingredients,
           recipe: pkg.recipe || mealObj.recipe || DEFAULT_RECIPE_TEXT,
-        };
+        });
       } else {
-        enrichedMeals[mealType] = {
+        enrichedMeals[mealType] = ensureMealServingMetadata({
           ...mealObj,
           ingredients: normalizeDetailedIngredients(existingIngredients, mealObj.name || 'Meal'),
-        };
+        });
       }
     }
     
@@ -4331,6 +5214,8 @@ async function getUserMealPreferences(userId: number): Promise<any | null> {
       diet: prefJson?.diet ?? row.diet ?? null,
       allergies,
       healthConditions: Array.isArray(prefJson?.healthConditions) ? prefJson.healthConditions : [],
+      ckdProfile: prefJson?.ckdProfile ?? prefJson?.clinicalProfile?.ckd ?? null,
+      clinicalProfile: prefJson?.clinicalProfile ?? null,
       demographics: prefJson?.demographics ?? null,
       dietaryRestrictions: prefJson?.dietaryRestrictions ?? null,
       socioeconomic: prefJson?.socioeconomic ?? null,
@@ -4464,9 +5349,30 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
       normalizedDiet,
       allRestrictionTokens
     );
+    const healthRuleContext = buildMealPlannerHealthRuleContext(nutritionProfile, targets, goal, normalizedDiet);
+    if (healthRuleContext.validationErrors.length > 0) {
+      return res.status(422).json({
+        success: false,
+        message: 'More clinical information is required before a safe meal plan can be generated.',
+        errors: healthRuleContext.validationErrors,
+        requiredFields: healthConditions.includes('chronic_kidney_disease')
+          ? ['demographics.weightKg', 'ckdProfile.stage', 'ckdProfile.treatment', 'ckdProfile.metabolicallyStable']
+          : [],
+        saved: false,
+      });
+    }
+    const effectiveTargets = healthRuleContext.effectiveTargets;
+    const effectiveDiet = healthRuleContext.effectiveDiet;
+    nutritionProfile.diet = effectiveDiet;
+    nutritionProfile.healthRuleSummary = {
+      effectiveTargets,
+      effectiveDiet,
+      cautions: healthRuleContext.cautions,
+    };
     const citationIds = getCitationIdsForProfile(nutritionProfile, allergyTokens.length > 0);
     const citations = selectCitations(citationIds);
-    const evidenceSummary = buildEvidenceSummary(nutritionProfile, targets, citationIds);
+    const evidenceSummary = buildEvidenceSummary(nutritionProfile, effectiveTargets, citationIds);
+    const healthConditionTips = buildMealPlannerHealthConditionTips(nutritionProfile, healthRuleContext);
 
     // Best-effort persist preferences for later reload in the UI.
     try {
@@ -4474,25 +5380,26 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
         lifestyle,
         mealType,
         goal,
-        diet: normalizedDiet,
+        diet: effectiveDiet,
         allergies: allergyTokens,
         healthConditions,
         demographics: nutritionProfile.demographics,
+        ckdProfile: nutritionProfile.ckdProfile,
         dietaryRestrictions: normalizedDietaryRestrictions,
         socioeconomic: nutritionProfile.socioeconomic,
         lifestyleFactors: nutritionProfile.lifestyleFactors,
         // keep deprecated field for older schemas/clients
         deprecatedDietaryRestrictions: deprecatedRestrictionTokens,
-        targets,
+        targets: effectiveTargets,
       });
     } catch {
       // ignore preference persistence errors
     }
 
     if (!dbConnected) {
-      let weekPlan = generateWeekPlan(null, targets, goal, allRestrictionTokens, undefined, normalizedDiet);
+      let weekPlan = generateWeekPlan(null, effectiveTargets, goal, allRestrictionTokens, undefined, effectiveDiet);
       weekPlan = addRiceSidesToMeals(weekPlan);
-      weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
+      weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, effectiveTargets);
 
       const offlineAllergenViolations = mealPlannerFindWeekPlanAllergenViolations(
         weekPlan,
@@ -4509,6 +5416,18 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
         });
       }
 
+      weekPlan = enforceMealPlannerCkdProteinTargets(weekPlan, nutritionProfile, healthRuleContext);
+      weekPlan = ensureWeekPlanServingMetadata(weekPlan);
+      const offlineHealthViolations = mealPlannerFindWeekPlanHealthRuleViolations(weekPlan, healthRuleContext);
+      if (offlineHealthViolations.length > 0) {
+        return res.status(503).json({
+          success: false,
+          message: 'Database is unavailable and the fallback plan could not satisfy the selected medical-condition safeguards.',
+          healthConditionsApplied: healthConditions,
+          healthRuleViolations: offlineHealthViolations,
+          saved: false,
+        });
+      }
       weekPlan = recomputeWeekPlanTotals(weekPlan);
       weekPlan = annotateWeekPlanWithEvidence(weekPlan, nutritionProfile, citationIds);
       return res.status(503).json({
@@ -4518,7 +5437,8 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
           weekPlan,
           shoppingList: generateShoppingList(weekPlan),
           mealPrepTips: getMealPrepTips(weekPlan),
-          nutritionTips: getNutritionTips(goal),
+          nutritionTips: getNutritionTips(goal, nutritionProfile, healthRuleContext),
+          healthConditionTips,
           evidenceSummary,
           citations,
           profileSummary: nutritionProfile
@@ -4531,11 +5451,14 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
 
     // Apply best-effort filtering so restricted dishes are not offered to the AI.
     const tokenFilteredDbDishes = filterDishesByTokens(dbDishes || [], allRestrictionTokens);
-    const dietFilteredDbDishes = filterDishesByDiet(tokenFilteredDbDishes, normalizedDiet);
+    const dietFilteredDbDishes = filterDishesByDiet(tokenFilteredDbDishes, effectiveDiet);
     const profileFilteredDbDishes = filterDishesByHealthProfile(
-      normalizedDiet ? dietFilteredDbDishes : tokenFilteredDbDishes,
+      effectiveDiet ? dietFilteredDbDishes : tokenFilteredDbDishes,
       nutritionProfile.healthConditions,
-      nutritionProfile.dietaryRestrictions.foodPreferences
+      nutritionProfile.dietaryRestrictions.foodPreferences,
+      nutritionProfile,
+      effectiveTargets,
+      healthRuleContext
     );
     // Apply a second, explicit allergen filter. The generic token filter may
     // miss aliases such as mayonnaise, balut, tortang, or *silog for egg.
@@ -4553,7 +5476,7 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
     }
 
     const poolAssessment = assessDietPoolSufficiency(filteredDbDishes);
-    const allowAIFillInMeals = !!normalizedDiet && poolAssessment.isInsufficient;
+    const allowAIFillInMeals = (healthConditions.length > 0 || !!effectiveDiet) && poolAssessment.isInsufficient;
 
     /*
      * Important for variety:
@@ -4599,11 +5522,11 @@ app.post('/api/meal-planner/generate', authenticateToken, async (req: AuthReques
       Math.random().toString(36).slice(2, 10)
     ].join('-');
 
-    const dietConstraint = normalizedDiet
-      ? `\n- Diet type: ${humanizeDietType(normalizedDiet)}`
+    const dietConstraint = effectiveDiet
+      ? `\n- Diet type: ${humanizeDietType(effectiveDiet)}`
       : `\n- Diet type: no special diet selected`;
 
-    const dietRuleText = getDietPromptRule(normalizedDiet);
+    const dietRuleText = getDietPromptRule(effectiveDiet);
     const dietRules = dietRuleText ? `
 - ${dietRuleText}` : '';
 
@@ -4631,14 +5554,14 @@ GENERATION REQUEST
 - Allergies and prohibited foods: ${humanizeTokens(allRestrictionTokens) || 'none reported'}
 - Absolute allergen alias blocklist: ${mealPlannerAllergenBlocklistText(allergyTokens)}
 - Daily nutrition targets:
-  - Calories: ${Number(targets?.calories ?? 2000)} kcal
-  - Protein: ${Number(targets?.protein ?? 150)} g
-  - Carbohydrates: ${Number(targets?.carbs ?? 250)} g
-  - Fat: ${Number(targets?.fats ?? 70)} g
+  - Calories: ${Number(effectiveTargets?.calories ?? 2000)} kcal
+  - Protein: ${Number(effectiveTargets?.protein ?? 150)} g
+  - Carbohydrates: ${Number(effectiveTargets?.carbs ?? 250)} g
+  - Fat: ${Number(effectiveTargets?.fats ?? 70)} g
 ${dietPoolNote}
 
 PERSONALIZATION RULES
-1. ${mealPlannerGoalRules(goal)}
+1. ${mealPlannerGoalRules(goal, nutritionProfile)}
 2. ${mealPlannerLifestyleRules(lifestyle)}
 3. ${mealPlannerMealTypeRules(mealType)}
 4. ${previousMealsRule}
@@ -4653,9 +5576,9 @@ PERSONALIZATION RULES
 13. ${dishUsageRule}${dietRules}
 
 HEALTH AND EVIDENCE PROFILE
-${buildNutritionProfilePromptBlock(nutritionProfile, targets)}
+${buildNutritionProfilePromptBlock(nutritionProfile, effectiveTargets, healthRuleContext)}
 
-${buildNationalNutritionStandardsBlock(targets)}
+${buildNationalNutritionStandardsBlock(effectiveTargets)}
 
 AVAILABLE DISH POOL
 ${dishesJson}
@@ -4759,7 +5682,7 @@ OUTPUT REQUIREMENTS
           );
 
           weekPlan = addRiceSidesToMeals(weekPlan);
-          weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
+          weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, effectiveTargets);
         } else {
           console.warn('[Meal Planner] AI returned invalid/incomplete JSON; using randomized fallback', {
             userId,
@@ -4789,11 +5712,11 @@ OUTPUT REQUIREMENTS
         goal,
         allRestrictionTokens,
         randomizedDbDishes,
-        normalizedDiet
+        effectiveDiet
       );
 
       weekPlan = addRiceSidesToMeals(weekPlan);
-      weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
+      weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, effectiveTargets);
     }
 
     if (hasFlatMainVariety(weekPlan)) {
@@ -4802,13 +5725,13 @@ OUTPUT REQUIREMENTS
         goal,
         lifestyle,
         mealType,
-        normalizedDiet
+        effectiveDiet
       });
     }
 
     // Enrich week plan with recipes (AWAIT this to ensure recipes are included in response)
     try {
-      weekPlan = await enrichWeekPlanWithRecipes(weekPlan);
+      weekPlan = await enrichWeekPlanWithRecipes(weekPlan, buildMealPlannerHealthConditionPromptBlock(nutritionProfile, healthRuleContext));
     } catch (err: any) {
     }
 
@@ -4842,7 +5765,7 @@ OUTPUT REQUIREMENTS
         // Replacement meals already contain DB details when available.
       }
 
-      weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, targets);
+      weekPlan = scaleWeekPlanToCalorieTarget(weekPlan, effectiveTargets);
       allergenViolations = mealPlannerFindWeekPlanAllergenViolations(
         weekPlan,
         allergyTokens
@@ -4865,6 +5788,32 @@ OUTPUT REQUIREMENTS
       });
     }
 
+    // Apply final condition-specific safeguards after recipes and side dishes have been added.
+    weekPlan = enforceMealPlannerCkdProteinTargets(weekPlan, nutritionProfile, healthRuleContext);
+    weekPlan = ensureWeekPlanServingMetadata(weekPlan);
+
+    let healthRuleViolations = mealPlannerFindWeekPlanHealthRuleViolations(weekPlan, healthRuleContext);
+    if (healthRuleViolations.length > 0) {
+      weekPlan = mealPlannerReplaceHealthUnsafeMeals(
+        weekPlan,
+        randomizedDbDishes,
+        healthRuleContext
+      );
+      weekPlan = enforceMealPlannerCkdProteinTargets(weekPlan, nutritionProfile, healthRuleContext);
+      weekPlan = ensureWeekPlanServingMetadata(weekPlan);
+      healthRuleViolations = mealPlannerFindWeekPlanHealthRuleViolations(weekPlan, healthRuleContext);
+    }
+
+    if (healthRuleViolations.length > 0) {
+      return res.status(422).json({
+        success: false,
+        message: 'The generated plan could not satisfy all selected medical-condition safeguards and was blocked.',
+        healthConditionsApplied: healthConditions,
+        healthRuleViolations,
+        saved: false,
+      });
+    }
+
     // Final consistency pass: make sure day totals always equal summed meal macros.
     weekPlan = recomputeWeekPlanTotals(weekPlan);
     weekPlan = annotateWeekPlanWithEvidence(weekPlan, nutritionProfile, citationIds);
@@ -4883,11 +5832,14 @@ OUTPUT REQUIREMENTS
       shoppingList: generateShoppingList(weekPlan),
       todayShoppingList,
       mealPrepTips: getMealPrepTips(weekPlan),
-      nutritionTips: getNutritionTips(goal),
+      nutritionTips: getNutritionTips(goal, nutritionProfile, healthRuleContext),
+      healthConditionTips,
       evidenceSummary,
       citations,
       profileSummary: nutritionProfile,
       allergiesApplied: allergyTokens,
+      healthConditionsApplied: healthConditions,
+      healthRuleSummary: nutritionProfile.healthRuleSummary,
     };
 
     // Generation only previews the plan. Saving happens exclusively through
@@ -4906,9 +5858,23 @@ OUTPUT REQUIREMENTS
 
 app.post(['/api/meal-planner/regenerate', '/meal-planner/regenerate'], authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    // Accept flexible input shapes:
-    const { dayIndex, day, mealType, mealKey, mealTypeKey, mealPlan, planId, excludeMealNames = [], currentMeal, allergies, dietaryRestrictions, targets, goal, lifestyle, diet } = req.body || {};
-    const healthConditions = normalizeHealthConditions(req.body?.healthConditions || req.body?.healthCondition);
+    // Regeneration may receive only the selected meal. Reuse saved medical preferences when omitted.
+    const savedPreferences = await getUserMealPreferences(req.user!.id);
+    const mergedBody = {
+      ...(savedPreferences || {}),
+      ...(req.body || {}),
+      demographics: req.body?.demographics ?? savedPreferences?.demographics,
+      ckdProfile: req.body?.ckdProfile ?? savedPreferences?.ckdProfile,
+      healthConditions: req.body?.healthConditions ?? req.body?.healthCondition ?? savedPreferences?.healthConditions,
+      dietaryRestrictions: req.body?.dietaryRestrictions ?? savedPreferences?.dietaryRestrictions,
+      targets: req.body?.targets ?? savedPreferences?.targets,
+      diet: req.body?.diet ?? savedPreferences?.diet,
+      goal: req.body?.goal ?? savedPreferences?.goal,
+      lifestyle: req.body?.lifestyle ?? savedPreferences?.lifestyle,
+      allergies: req.body?.allergies ?? savedPreferences?.allergies,
+    };
+    const { dayIndex, day, mealType, mealKey, mealTypeKey, mealPlan, planId, excludeMealNames = [], currentMeal, allergies, dietaryRestrictions, targets, goal, lifestyle, diet } = mergedBody as any;
+    const healthConditions = normalizeHealthConditions(mergedBody.healthConditions);
     const normalizedDietaryRestrictions = normalizeDietaryRestrictions(dietaryRestrictions);
     const inferredDiet = inferDietFromRestrictions(normalizedDietaryRestrictions);
 
@@ -4918,11 +5884,26 @@ app.post(['/api/meal-planner/regenerate', '/meal-planner/regenerate'], authentic
     const allRestrictionTokens = Array.from(new Set([...allergyTokens, ...deprecatedRestrictionTokens, ...profileRestrictionTokens]));
     const normalizedDiet = normalizeDietType(diet || inferredDiet);
     const nutritionProfile = normalizeMealPlannerProfile(
-      { ...(req.body || {}), healthConditions, dietaryRestrictions: normalizedDietaryRestrictions },
+      { ...mergedBody, healthConditions, dietaryRestrictions: normalizedDietaryRestrictions },
       normalizedDiet,
       allRestrictionTokens
     );
+    const healthRuleContext = buildMealPlannerHealthRuleContext(nutritionProfile, targets, goal, normalizedDiet);
+    if (healthRuleContext.validationErrors.length > 0) {
+      return res.status(422).json({
+        success: false,
+        message: 'More clinical information is required before a safe meal can be regenerated.',
+        errors: healthRuleContext.validationErrors,
+        requiredFields: healthConditions.includes('chronic_kidney_disease')
+          ? ['demographics.weightKg', 'ckdProfile.stage', 'ckdProfile.treatment', 'ckdProfile.metabolicallyStable']
+          : [],
+      });
+    }
+    const effectiveTargets = healthRuleContext.effectiveTargets;
+    const effectiveDiet = healthRuleContext.effectiveDiet;
+    nutritionProfile.diet = effectiveDiet;
     const citationIds = getCitationIdsForProfile(nutritionProfile, allergyTokens.length > 0);
+    const healthConditionTips = buildMealPlannerHealthConditionTips(nutritionProfile, healthRuleContext);
 
     // Determine category for dish selection
     const category = mealTypeKey || mealType || mealKey || null;
@@ -4935,7 +5916,7 @@ app.post(['/api/meal-planner/regenerate', '/meal-planner/regenerate'], authentic
     };
     const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 
-    const dailyTarget = clamp(toFiniteNumber(targets?.calories, 2000), 800, 5000);
+    const dailyTarget = clamp(toFiniteNumber(effectiveTargets?.calories, 2000), 800, 5000);
 
     // Compute how many calories this regenerated meal should aim for.
     // If we have the current week plan/day, compute remaining calories after other meals.
@@ -4991,8 +5972,8 @@ app.post(['/api/meal-planner/regenerate', '/meal-planner/regenerate'], authentic
         protein: (mealObj.protein || 0) + randomRice.protein,
         fats: (mealObj.fats || 0) + randomRice.fats,
         ingredients: Array.isArray(mealObj.ingredients)
-          ? [...mealObj.ingredients, 'Garlic Fried Rice or Steamed Rice']
-          : ['Garlic Fried Rice or Steamed Rice']
+          ? [...mealObj.ingredients, '150 g cooked rice']
+          : ['150 g cooked rice']
       };
 
       updated.calories = caloriesFromMacrosWithFallback(updated);
@@ -5016,6 +5997,45 @@ app.post(['/api/meal-planner/regenerate', '/meal-planner/regenerate'], authentic
         suitabilityNotes: suitability.suitabilityNotes,
         citationIds: suitability.citationIds,
       };
+    };
+
+    const finalizeRegeneratedMeal = async (rawMeal: any, source: string) => {
+      let finalMeal = finalizeMealForHealthProfile(rawMeal, nutritionProfile, healthRuleContext, String(category || 'meal'));
+      const pkg = await generateRecipePackage(
+        finalMeal.name,
+        finalMeal.ingredients,
+        buildMealPlannerHealthConditionPromptBlock(nutritionProfile, healthRuleContext)
+      );
+      finalMeal = finalizeMealForHealthProfile(
+        { ...finalMeal, ingredients: pkg.ingredients, recipe: pkg.recipe },
+        nutritionProfile,
+        healthRuleContext,
+        String(category || 'meal')
+      );
+
+      const allergenHits = mealPlannerFindAllergenHits(finalMeal, allergyTokens);
+      const healthReasons = mealPlannerMealHealthViolationReasons(finalMeal, String(category || 'meal'), healthRuleContext);
+      if (allergenHits.length > 0 || healthReasons.length > 0) {
+        return res.status(422).json({
+          success: false,
+          message: 'The regenerated meal violated an allergy or medical-condition safeguard and was blocked.',
+          allergenHits,
+          healthRuleViolations: healthReasons,
+        });
+      }
+
+      return res.json({
+        success: true,
+        newMeal: attachEvidenceToMeal(finalMeal),
+        source,
+        healthConditionsApplied: healthConditions,
+        healthConditionTips,
+        healthRuleSummary: {
+          effectiveTargets,
+          effectiveDiet,
+          cautions: healthRuleContext.cautions,
+        },
+      });
     };
 
     // Get dishes by category if category provided else fetch all
@@ -5049,8 +6069,8 @@ app.post(['/api/meal-planner/regenerate', '/meal-planner/regenerate'], authentic
       const fallbackSourceByTokens = isSnack
         ? filterDishesByTokens(filipinoSnacks, allRestrictionTokens)
         : filterDishesByTokens(trustedFilipinoMealsDetailed, allRestrictionTokens);
-      const fallbackSourceByDiet = filterDishesByDiet(fallbackSourceByTokens, normalizedDiet);
-      const fallbackSource = normalizedDiet ? fallbackSourceByDiet : fallbackSourceByTokens;
+      const fallbackSourceByDiet = filterDishesByDiet(fallbackSourceByTokens, effectiveDiet);
+      const fallbackSource = effectiveDiet ? fallbackSourceByDiet : fallbackSourceByTokens;
 
       const fallbackDish = Array.isArray(fallbackSource) && fallbackSource.length > 0
         ? fallbackSource[Math.floor(Math.random() * fallbackSource.length)]
@@ -5059,23 +6079,25 @@ app.post(['/api/meal-planner/regenerate', '/meal-planner/regenerate'], authentic
         ? createMealObject(fallbackDish)
         : buildDietFallbackMeal(
             isSnack ? 'snack1' : String(normalizedCategory || 'lunch'),
-            normalizedDiet,
+            effectiveDiet,
             desiredMealCalories,
             allRestrictionTokens
           );
-      const pkg = await generateRecipePackage(mealObj.name, mealObj.ingredients);
-      return res.json({ success: true, newMeal: attachEvidenceToMeal({ ...mealObj, ingredients: pkg.ingredients, recipe: pkg.recipe }), source: 'fallback' });
+      return finalizeRegeneratedMeal(mealObj, 'fallback');
     }
 
     // Apply best-effort filtering for fallback picks
     const candidateByTokens = filterDishesByTokens(dishes, allRestrictionTokens);
-    const candidateByDiet = filterDishesByDiet(candidateByTokens, normalizedDiet);
+    const candidateByDiet = filterDishesByDiet(candidateByTokens, effectiveDiet);
     const candidateDishes = filterDishesByHealthProfile(
-      normalizedDiet ? candidateByDiet : candidateByTokens,
+      effectiveDiet ? candidateByDiet : candidateByTokens,
       nutritionProfile.healthConditions,
-      nutritionProfile.dietaryRestrictions.foodPreferences
+      nutritionProfile.dietaryRestrictions.foodPreferences,
+      nutritionProfile,
+      effectiveTargets,
+      healthRuleContext
     );
-    const allowAiFillInMeal = !!normalizedDiet && candidateDishes.length < 2;
+    const allowAiFillInMeal = (healthConditions.length > 0 || !!effectiveDiet) && candidateDishes.length < 2;
 
     // Helper: pick random excluding excludeArr
     function pickRandomExcluding(list: any[], exclude: string[]) {
@@ -5092,20 +6114,20 @@ app.post(['/api/meal-planner/regenerate', '/meal-planner/regenerate'], authentic
     // Build prompt for AI if needed
     const dishListJson = JSON.stringify(candidateDishes.map(d => ({ name: d.name, calories: d.calories, protein: d.protein, carbs: d.carbs, fats: d.fats })));
     const excludeText = excludeArr.length > 0 ? `\nDo NOT return these dish names: ${excludeArr.join(', ')}` : '';
-    const dietRuleText = getDietPromptRule(normalizedDiet);
+    const dietRuleText = getDietPromptRule(effectiveDiet);
     const listRule = allowAiFillInMeal
       ? 'Prefer the list below. If none of them fit the selected diet and constraints, you may create ONE Filipino meal that still follows the diet, targets, and allergies.'
       : 'Choose only from the list below.';
     const prompt = `
 You are a Filipino nutritionist. Choose a single ${isSnack ? 'snack' : String(category || mealType || 'meal')} best suited for the user.
-User targets: ${targets?.calories ?? 2000} kcal, ${targets?.protein ?? 150}g protein, ${targets?.carbs ?? 250}g carbs, ${targets?.fats ?? 70}g fats.
+User targets: ${effectiveTargets?.calories ?? 2000} kcal, ${effectiveTargets?.protein ?? 150}g protein, ${effectiveTargets?.carbs ?? 250}g carbs, ${effectiveTargets?.fats ?? 70}g fats.
 Aim for around ${desiredMealCalories} kcal for THIS regenerated ${isSnack ? 'snack' : 'meal'} so the whole day stays near the daily target.
-  Diet type: ${humanizeDietType(normalizedDiet)}.
+  Diet type: ${humanizeDietType(effectiveDiet)}.
   Diet rule: ${dietRuleText || 'No strict diet rule.'}
   Allergies / Avoid: ${humanizeTokens(allRestrictionTokens)}.
-${buildNutritionProfilePromptBlock(nutritionProfile, targets)}
+${buildNutritionProfilePromptBlock(nutritionProfile, effectiveTargets, healthRuleContext)}
 ${listRule}
-${buildNationalNutritionStandardsBlock(targets)}
+${buildNationalNutritionStandardsBlock(effectiveTargets)}
 ${excludeText}
 List: ${dishListJson}
 Return JSON: { "newMeal": { "name":"...", "ingredients":[...], "calories":..., "protein":..., "carbs":..., "fats":..., "recipe":"..." } }
@@ -5144,14 +6166,13 @@ Instruction rules: 4-7 numbered steps with actionable details and approximate ti
               ? createMealObject(picked)
               : buildDietFallbackMeal(
                   isSnack ? 'snack1' : String(normalizedCategory || 'lunch'),
-                  normalizedDiet,
+                  effectiveDiet,
                   desiredMealCalories,
                   allRestrictionTokens
                 );
             mealObj = addRiceSideToSingleMealIfMissing(mealObj);
             mealObj = scaleMealToDesiredCalories(mealObj);
-            const pkg = await generateRecipePackage(mealObj.name, mealObj.ingredients);
-            return res.json({ success: true, newMeal: attachEvidenceToMeal({ ...mealObj, ingredients: pkg.ingredients, recipe: pkg.recipe }), source: 'fallback-excluded' });
+            return finalizeRegeneratedMeal(mealObj, 'fallback-excluded');
           }
           // If DB contains this dish, use DB result for accurate macros
           const found = candidateDishes.find(d => String(d.name || '').toLowerCase().trim() === nameLower);
@@ -5159,14 +6180,12 @@ Instruction rules: 4-7 numbered steps with actionable details and approximate ti
             let mealObj: any = createMealObject(found);
             mealObj = addRiceSideToSingleMealIfMissing(mealObj);
             mealObj = scaleMealToDesiredCalories(mealObj);
-            const pkg = await generateRecipePackage(mealObj.name, mealObj.ingredients);
-            return res.json({ success: true, newMeal: attachEvidenceToMeal({ ...mealObj, ingredients: pkg.ingredients, recipe: pkg.recipe }), source: 'ai' });
+            return finalizeRegeneratedMeal(mealObj, 'ai');
           }
           let mealObj: any = createMealObject(parsed.newMeal);
           mealObj = addRiceSideToSingleMealIfMissing(mealObj);
           mealObj = scaleMealToDesiredCalories(mealObj);
-          const pkg = await generateRecipePackage(mealObj.name, mealObj.ingredients);
-          return res.json({ success: true, newMeal: attachEvidenceToMeal({ ...mealObj, ingredients: pkg.ingredients, recipe: pkg.recipe }), source: 'ai' });
+            return finalizeRegeneratedMeal(mealObj, 'ai');
         }
       } catch (err: any) {
       }
@@ -5196,14 +6215,13 @@ Instruction rules: 4-7 numbered steps with actionable details and approximate ti
       ? createMealObject(picked)
       : buildDietFallbackMeal(
           isSnack ? 'snack1' : String(normalizedCategory || 'lunch'),
-          normalizedDiet,
+          effectiveDiet,
           desiredMealCalories,
           allRestrictionTokens
         );
     mealObj = addRiceSideToSingleMealIfMissing(mealObj);
     mealObj = scaleMealToDesiredCalories(mealObj);
-    const pkg = await generateRecipePackage(mealObj.name, mealObj.ingredients);
-    return res.json({ success: true, newMeal: attachEvidenceToMeal({ ...mealObj, ingredients: pkg.ingredients, recipe: pkg.recipe }), source: 'fallback' });
+      return finalizeRegeneratedMeal(mealObj, 'fallback');
 
   } catch (err: any) {
     return res.status(500).json({ success: false, message: 'Regenerate failed', error: getErrorMessage(err) });
