@@ -192,14 +192,14 @@ const SummaryBar: React.FC<{ calories: number; protein: number }> = ({
       <span className="mp-icon">🔥</span>
       <div>
         <div className="mp-label">Calories</div>
-        <div className="mp-value">{calories} kcal</div>
+        <div className="mp-value">{calories.toFixed(0)} kcal</div>
       </div>
     </div>
     <div className="mp-summary-item">
       <span className="mp-icon">💪</span>
       <div>
         <div className="mp-label">Protein</div>
-        <div className="mp-value">{protein} g</div>
+        <div className="mp-value">{protein.toFixed(2)} g</div>
       </div>
     </div>
   </div>
@@ -316,6 +316,18 @@ interface DayPlan {
   totalFats: number;
 }
 
+interface HealthConditionTip {
+  condition: string;
+  label: string;
+  summary: string;
+  whyMealPlanChanged: string[];
+  foodsToPrioritize: string[];
+  foodsToLimitOrAvoid: string[];
+  practicalTips: string[];
+  medicalNote?: string;
+  citationIds: string[];
+}
+
 interface MealPlan {
   weekPlan: DayPlan[];
   // The calorie target used to validate and normalize every day in the plan.
@@ -330,6 +342,7 @@ interface MealPlan {
   };
   mealPrepTips: string[];
   nutritionTips: string[];
+  healthConditionTips?: HealthConditionTip[];
   evidenceSummary?: string[];
   citations?: NutritionCitation[];
   profileSummary?: any;
@@ -343,6 +356,196 @@ interface NutritionCitation {
   summary?: string;
 }
 
+const KNOWN_NUTRITION_CITATIONS: Record<string, NutritionCitation> = {
+  fnri_pinggang_pinoy: {
+    id: "fnri_pinggang_pinoy",
+    title: "Pinggang Pinoy for Filipino Adults",
+    organization: "FNRI-DOST / NNC",
+    url: "https://www.fnri.dost.gov.ph/images/sources/PinggangPinoy-Adult.pdf",
+  },
+  fnri_pdri: {
+    id: "fnri_pdri",
+    title: "Philippine Dietary Reference Intakes",
+    organization: "FNRI-DOST",
+    url: "https://fnri.dost.gov.ph/images/images/news/PDRI-2018.pdf",
+  },
+  who_healthy_diet: {
+    id: "who_healthy_diet",
+    title: "Healthy Diet",
+    organization: "World Health Organization",
+    url: "https://www.who.int/news-room/fact-sheets/detail/healthy-diet",
+  },
+  cdc_diabetes_meal_planning: {
+    id: "cdc_diabetes_meal_planning",
+    title: "Diabetes Meal Planning",
+    organization: "CDC",
+    url: "https://www.cdc.gov/diabetes/healthy-eating/diabetes-meal-planning.html",
+  },
+  aha_hypertension_dash: {
+    id: "aha_hypertension_dash",
+    title: "Managing Blood Pressure with a Heart-Healthy Diet",
+    organization: "American Heart Association",
+    url: "https://www.heart.org/en/health-topics/high-blood-pressure/changes-you-can-make-to-manage-high-blood-pressure/managing-blood-pressure-with-a-heart-healthy-diet",
+  },
+  aha_cholesterol: {
+    id: "aha_cholesterol",
+    title: "Prevention and Treatment of High Cholesterol",
+    organization: "American Heart Association",
+    url: "https://www.heart.org/en/health-topics/cholesterol/prevention-and-treatment-of-high-cholesterol-hyperlipidemia",
+  },
+  niddk_ckd: {
+    id: "niddk_ckd",
+    title: "Healthy Eating for Adults with Chronic Kidney Disease",
+    organization: "NIDDK",
+    url: "https://www.niddk.nih.gov/health-information/kidney-disease/chronic-kidney-disease-ckd/healthy-eating-adults-chronic-kidney-disease",
+  },
+  fda_food_allergies: {
+    id: "fda_food_allergies",
+    title: "Food Allergies: What You Need to Know",
+    organization: "FDA",
+    url: "https://www.fda.gov/food/buy-store-serve-safe-food/food-allergies-what-you-need-know",
+  },
+  cdc_weight_activity: {
+    id: "cdc_weight_activity",
+    title: "Physical Activity and Your Weight and Health",
+    organization: "CDC",
+    url: "https://www.cdc.gov/healthy-weight-growth/physical-activity/index.html",
+  },
+};
+
+const HEALTH_TIP_FALLBACKS: Record<string, HealthConditionTip> = {
+  hypertension: {
+    condition: "hypertension",
+    label: "Hypertension",
+    summary:
+      "Blood pressure management often includes reducing sodium and emphasizing minimally processed foods.",
+    whyMealPlanChanged: [
+      "Meals favor a DASH-style pattern with measured seasonings and fewer processed foods.",
+    ],
+    foodsToPrioritize: [
+      "vegetables and fruits",
+      "whole grains and legumes",
+      "fish and lean poultry",
+    ],
+    foodsToLimitOrAvoid: [
+      "bagoong, patis, and regular soy sauce",
+      "processed meats and instant noodles",
+      "salted fish and salty snacks",
+    ],
+    practicalTips: [
+      "Check sodium per serving on food labels.",
+      "Use herbs, garlic, ginger, calamansi, and vinegar for flavor.",
+    ],
+    medicalNote:
+      "Follow the sodium or fluid target prescribed by your clinician when it differs from this general guidance.",
+    citationIds: ["aha_hypertension_dash", "who_healthy_diet"],
+  },
+  diabetes: {
+    condition: "diabetes",
+    label: "Diabetes",
+    summary:
+      "Consistent carbohydrate portions and pairing carbohydrates with protein or fiber may support steadier blood glucose.",
+    whyMealPlanChanged: [
+      "Carbohydrates are measured and distributed across meals instead of being concentrated in one meal.",
+    ],
+    foodsToPrioritize: [
+      "non-starchy vegetables",
+      "lean protein",
+      "whole or minimally processed carbohydrate sources",
+    ],
+    foodsToLimitOrAvoid: [
+      "sugar-sweetened drinks",
+      "large servings of refined rice, bread, or noodles",
+      "heavily sweetened desserts",
+    ],
+    practicalTips: [
+      "Use the plate method and monitor portions.",
+      "Follow your prescribed glucose-monitoring and medication plan.",
+    ],
+    medicalNote:
+      "Medication, insulin, pregnancy, and kidney disease can change carbohydrate needs; consult your diabetes care team.",
+    citationIds: ["cdc_diabetes_meal_planning"],
+  },
+  obesity_overweight: {
+    condition: "obesity_overweight",
+    label: "Obesity / Overweight",
+    summary:
+      "A sustainable calorie deficit and filling, nutrient-dense foods can support gradual weight management.",
+    whyMealPlanChanged: [
+      "Portions are tied to the calorie target and meals emphasize vegetables, lean protein, and fiber.",
+    ],
+    foodsToPrioritize: [
+      "vegetables and whole fruits",
+      "lean protein",
+      "high-fiber foods and broth-based meals",
+    ],
+    foodsToLimitOrAvoid: [
+      "sugar-sweetened drinks",
+      "frequent deep-fried foods",
+      "large portions of calorie-dense snacks",
+    ],
+    practicalTips: [
+      "Use measured servings rather than eating directly from packages.",
+      "Choose gradual, sustainable changes instead of extreme restriction.",
+    ],
+    medicalNote:
+      "Weight goals should consider medicines, pregnancy, eating-disorder history, and other medical conditions.",
+    citationIds: ["cdc_weight_activity", "who_healthy_diet"],
+  },
+  dyslipidemia_cardiovascular: {
+    condition: "dyslipidemia_cardiovascular",
+    label: "Dyslipidemia / Cardiovascular",
+    summary:
+      "Heart-healthy eating generally limits saturated and trans fats while emphasizing fiber and unsaturated fats.",
+    whyMealPlanChanged: [
+      "Meals favor lean proteins, fish, legumes, vegetables, and less-fried cooking methods.",
+    ],
+    foodsToPrioritize: [
+      "fish and legumes",
+      "vegetables, fruits, and whole grains",
+      "small measured amounts of unsaturated oils",
+    ],
+    foodsToLimitOrAvoid: [
+      "pork belly, bagnet, lechon, and processed meats",
+      "butter, cream, and lard",
+      "deep-fried foods",
+    ],
+    practicalTips: [
+      "Trim visible fat and remove poultry skin.",
+      "Prefer steaming, grilling, baking, or sautéing with measured oil.",
+    ],
+    medicalNote:
+      "Follow your clinician's lipid, sodium, and medication recommendations.",
+    citationIds: ["aha_cholesterol", "who_healthy_diet"],
+  },
+  chronic_kidney_disease: {
+    condition: "chronic_kidney_disease",
+    label: "Chronic Kidney Disease",
+    summary:
+      "CKD nutrition varies by stage, dialysis status, laboratory results, nutritional status, and prescribed treatment.",
+    whyMealPlanChanged: [
+      "The plan avoids automatically using a high-protein pattern and applies the renal targets supplied to the backend.",
+    ],
+    foodsToPrioritize: [
+      "measured protein portions based on the prescribed target",
+      "fresh, lower-sodium foods",
+      "foods compatible with current potassium and phosphorus results",
+    ],
+    foodsToLimitOrAvoid: [
+      "high-protein supplements unless prescribed",
+      "processed and heavily salted foods",
+      "potassium, phosphorus, or fluid excess only when restricted by the care team",
+    ],
+    practicalTips: [
+      "Ask for your CKD stage and whether you are on dialysis.",
+      "Review potassium, phosphorus, sodium, protein, and fluid targets with a renal dietitian.",
+    ],
+    medicalNote:
+      "Do not use general CKD advice to replace individualized guidance from a nephrologist or renal dietitian.",
+    citationIds: ["niddk_ckd"],
+  },
+};
+
 interface SavedMealPlan {
   id: number;
   plan_name: string;
@@ -355,7 +558,7 @@ const MealPlanner: React.FC = () => {
   // Form State
   const [lifestyle, setLifestyle] = useState<string>("moderate");
   const [mealType, setMealType] = useState<string>("balanced");
-  const [goal, setGoal] = useState<string>("muscle_gain");
+  const [goal, setGoal] = useState<string>("maintain");
   const [diet, setDiet] = useState<string>("");
   const [allergies, setAllergies] = useState<string[]>([]);
   const [calorieTarget, setCalorieTarget] = useState<number>(2000);
@@ -467,7 +670,7 @@ const MealPlanner: React.FC = () => {
           pref.lifestyle || lifestyleFactors.physicalActivity || "moderate",
         );
         setMealType(pref.mealType || "balanced");
-        setGoal(pref.goal || "muscle_gain");
+        setGoal(pref.goal || "maintain");
         setDiet(normalizeDietValue(pref.diet));
         setAge(Number(demographics.age) || 30);
         setSex(String(demographics.sex || ""));
@@ -1129,18 +1332,22 @@ const MealPlanner: React.FC = () => {
     return arr.slice(0, max);
   };
 
-  const getCitationLabel = (citationId: string) => {
-    const source = mealPlan?.citations?.find(
-      (citation) => citation.id === citationId,
-    );
-    return source?.organization || source?.title || citationId;
-  };
-
   const getCitationById = (citationId: string) => {
+    const normalizedId = String(citationId || "").trim();
+    if (!normalizedId) return null;
+
     return (
-      mealPlan?.citations?.find((citation) => citation.id === citationId) ||
+      mealPlan?.citations?.find(
+        (citation) => citation.id === normalizedId,
+      ) ||
+      KNOWN_NUTRITION_CITATIONS[normalizedId] ||
       null
     );
+  };
+
+  const getCitationLabel = (citationId: string) => {
+    const source = getCitationById(citationId);
+    return source?.organization || source?.title || citationId;
   };
 
   const getTodayDayName = () => {
@@ -1194,9 +1401,9 @@ const MealPlanner: React.FC = () => {
           <h3 className="daily-meal-title">{mealObj.name}</h3>
           <div className="daily-meal-macros">
             <span>{mealCalories} cal</span>
-            <span>{mealObj.protein ?? 0}g protein</span>
-            <span>{mealObj.carbs ?? 0}g carbs</span>
-            <span>{mealObj.fats ?? 0}g fats</span>
+            <span>{mealObj.protein.toFixed(2) ?? 0}g protein</span>
+            <span>{mealObj.carbs.toFixed(2) ?? 0}g carbs</span>
+            <span>{mealObj.fats.toFixed(2) ?? 0}g fats</span>
           </div>
           {Array.isArray(mealObj.ingredients) &&
             mealObj.ingredients.length > 0 && (
@@ -1607,6 +1814,113 @@ const MealPlanner: React.FC = () => {
             .filter(Boolean)
         : [];
 
+    const normalizeTipStringList = (value: any): string[] => {
+      if (Array.isArray(value)) {
+        return value.map(String).map((item) => item.trim()).filter(Boolean);
+      }
+      if (typeof value === "string") {
+        return value
+          .split(/\r?\n|;/)
+          .map((item) => item.replace(/^[-•]\s*/, "").trim())
+          .filter(Boolean);
+      }
+      return [];
+    };
+
+    const rawHealthConditionTips =
+      plan.healthConditionTips ?? plan.health_condition_tips ?? [];
+    let healthConditionTips: HealthConditionTip[] = Array.isArray(
+      rawHealthConditionTips,
+    )
+      ? rawHealthConditionTips
+          .map((tip: any) => {
+            const condition = String(
+              tip?.condition ?? tip?.value ?? tip?.id ?? "",
+            )
+              .trim()
+              .toLowerCase()
+              .replace(/[\s-]+/g, "_");
+            const fallback = HEALTH_TIP_FALLBACKS[condition];
+
+            return {
+              condition,
+              label: String(
+                tip?.label || fallback?.label || condition || "Health condition",
+              ).trim(),
+              summary: String(
+                tip?.summary || fallback?.summary || "",
+              ).trim(),
+              whyMealPlanChanged: normalizeTipStringList(
+                tip?.whyMealPlanChanged ??
+                  tip?.why_meal_plan_changed ??
+                  fallback?.whyMealPlanChanged,
+              ),
+              foodsToPrioritize: normalizeTipStringList(
+                tip?.foodsToPrioritize ??
+                  tip?.foods_to_prioritize ??
+                  fallback?.foodsToPrioritize,
+              ),
+              foodsToLimitOrAvoid: normalizeTipStringList(
+                tip?.foodsToLimitOrAvoid ??
+                  tip?.foods_to_limit_or_avoid ??
+                  tip?.foodsToAvoid ??
+                  fallback?.foodsToLimitOrAvoid,
+              ),
+              practicalTips: normalizeTipStringList(
+                tip?.practicalTips ??
+                  tip?.practical_tips ??
+                  fallback?.practicalTips,
+              ),
+              medicalNote: String(
+                tip?.medicalNote ??
+                  tip?.medical_note ??
+                  fallback?.medicalNote ??
+                  "",
+              ).trim(),
+              citationIds: normalizeTipStringList(
+                tip?.citationIds ??
+                  tip?.citation_ids ??
+                  fallback?.citationIds,
+              ),
+            } as HealthConditionTip;
+          })
+          .filter(
+            (tip: HealthConditionTip) =>
+              Boolean(tip.condition || tip.label || tip.summary),
+          )
+      : [];
+
+    // Older saved plans may not contain the new structured field. Rebuild
+    // condition tips from the saved profile when possible.
+    if (healthConditionTips.length === 0) {
+      const savedConditions = parseDelimitedSelection(
+        plan.profileSummary?.healthConditions ??
+          plan.profile_summary?.healthConditions ??
+          plan.profileSummary?.health_conditions ??
+          plan.profile_summary?.health_conditions ??
+          [],
+      )
+        .map((condition) =>
+          String(condition)
+            .trim()
+            .toLowerCase()
+            .replace(/[\s-]+/g, "_"),
+        )
+        .filter(Boolean);
+
+      healthConditionTips = savedConditions
+        .map((condition) => HEALTH_TIP_FALLBACKS[condition])
+        .filter(Boolean)
+        .map((tip) => ({
+          ...tip,
+          whyMealPlanChanged: [...tip.whyMealPlanChanged],
+          foodsToPrioritize: [...tip.foodsToPrioritize],
+          foodsToLimitOrAvoid: [...tip.foodsToLimitOrAvoid],
+          practicalTips: [...tip.practicalTips],
+          citationIds: [...tip.citationIds],
+        }));
+    }
+
     const rawEvidenceSummary =
       plan.evidenceSummary ?? plan.evidence_summary ?? [];
     const evidenceSummary = Array.isArray(rawEvidenceSummary)
@@ -1619,20 +1933,51 @@ const MealPlanner: React.FC = () => {
         : [];
 
     const rawCitations = plan.citations ?? plan.sources ?? [];
-    const citations = Array.isArray(rawCitations)
+    const normalizedCitations: NutritionCitation[] = Array.isArray(rawCitations)
       ? rawCitations
-          .map((source: any) => ({
-            id: String(source?.id || "").trim(),
-            title: String(source?.title || "").trim(),
-            organization: String(source?.organization || "").trim(),
-            url: String(source?.url || "").trim(),
-            summary: source?.summary ? String(source.summary) : undefined,
-          }))
+          .map((source: any) => {
+            const id = String(source?.id || "").trim();
+            const fallback = KNOWN_NUTRITION_CITATIONS[id];
+
+            return {
+              id,
+              title: String(source?.title || fallback?.title || "").trim(),
+              organization: String(
+                source?.organization || fallback?.organization || "",
+              ).trim(),
+              url: String(source?.url || fallback?.url || "").trim(),
+              summary: source?.summary
+                ? String(source.summary)
+                : fallback?.summary,
+            };
+          })
           .filter(
             (source: NutritionCitation) =>
               source.id && source.title && source.url,
           )
       : [];
+
+    const referencedCitationIds = new Set<string>();
+    healthConditionTips.forEach((tip) =>
+      tip.citationIds.forEach((id) => referencedCitationIds.add(id)),
+    );
+    normalizedWeek.forEach((day) =>
+      Object.values(day.meals || {}).forEach((meal: any) =>
+        (Array.isArray(meal?.citationIds) ? meal.citationIds : []).forEach(
+          (id: string) => referencedCitationIds.add(String(id)),
+        ),
+      ),
+    );
+
+    const citationMap = new Map<string, NutritionCitation>();
+    normalizedCitations.forEach((source) => citationMap.set(source.id, source));
+    referencedCitationIds.forEach((id) => {
+      const fallback = KNOWN_NUTRITION_CITATIONS[id];
+      if (fallback && !citationMap.has(id)) {
+        citationMap.set(id, fallback);
+      }
+    });
+    const citations = Array.from(citationMap.values());
 
     return {
       ...plan,
@@ -1642,6 +1987,7 @@ const MealPlanner: React.FC = () => {
       shoppingList,
       mealPrepTips,
       nutritionTips,
+      healthConditionTips,
       evidenceSummary,
       citations,
       profileSummary: plan.profileSummary ?? plan.profile_summary ?? null,
@@ -1841,6 +2187,24 @@ const MealPlanner: React.FC = () => {
                 weekPlan: json.weekPlan,
                 shoppingList:
                   json.shoppingList ?? mealPlan.shoppingList ?? [],
+                nutritionTips:
+                  json.nutritionTips ??
+                  json.nutrition_tips ??
+                  mealPlan.nutritionTips,
+                healthConditionTips:
+                  json.healthConditionTips ??
+                  json.health_condition_tips ??
+                  mealPlan.healthConditionTips,
+                evidenceSummary:
+                  json.evidenceSummary ??
+                  json.evidence_summary ??
+                  mealPlan.evidenceSummary,
+                citations:
+                  json.citations ?? json.sources ?? mealPlan.citations,
+                profileSummary:
+                  json.profileSummary ??
+                  json.profile_summary ??
+                  mealPlan.profileSummary,
               },
               mealPlan.targetCalories ?? calorieTarget,
             );
@@ -1865,7 +2229,28 @@ const MealPlanner: React.FC = () => {
                 );
               });
               if (nextShoppingList) next.shoppingList = nextShoppingList;
-              return next;
+
+              const responseHealthTips =
+                json?.healthConditionTips ?? json?.health_condition_tips;
+              if (Array.isArray(responseHealthTips)) {
+                next.healthConditionTips = responseHealthTips;
+              }
+
+              const responseNutritionTips =
+                json?.nutritionTips ?? json?.nutrition_tips;
+              if (Array.isArray(responseNutritionTips)) {
+                next.nutritionTips = responseNutritionTips.map(String);
+              }
+
+              const responseCitations = json?.citations ?? json?.sources;
+              if (Array.isArray(responseCitations)) {
+                next.citations = responseCitations;
+              }
+
+              return ensurePlanNormalized(
+                next,
+                prev.targetCalories ?? calorieTarget,
+              );
             });
           }
 
@@ -2049,7 +2434,281 @@ const MealPlanner: React.FC = () => {
           color: var(--ion-color-medium);
         }
 
+        .health-tip-card,
+        .health-general-tips-card,
+        .meal-prep-tips-card {
+          overflow: hidden;
+          border: 1px solid rgba(var(--ion-color-primary-rgb), 0.14);
+          border-radius: 18px;
+          background: #ffffff;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+        }
+
+        .health-tip-card ion-card-header,
+        .health-general-tips-card ion-card-header,
+        .meal-prep-tips-card ion-card-header {
+          padding: 16px 18px;
+          border-bottom: 1px solid rgba(var(--ion-color-primary-rgb), 0.12);
+          background: rgba(var(--ion-color-primary-rgb), 0.07);
+        }
+
+        .health-tip-card ion-card-title,
+        .health-general-tips-card ion-card-title,
+        .meal-prep-tips-card ion-card-title {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          color: #172033;
+          font-size: 1rem;
+          font-weight: 800;
+        }
+
+        .health-tip-card ion-card-title ion-icon,
+        .health-general-tips-card ion-card-title ion-icon,
+        .meal-prep-tips-card ion-card-title ion-icon {
+          width: 22px;
+          height: 22px;
+          color: var(--ion-color-primary);
+        }
+
+        .health-tip-card ion-card-content {
+          padding: 16px;
+        }
+
+        .health-tip-condition {
+          margin-bottom: 14px;
+          padding: 16px;
+          border: 1px solid #e4e7ec;
+          border-radius: 15px;
+          background: #ffffff;
+          box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+        }
+
+        .health-tip-condition:last-child {
+          margin-bottom: 0;
+        }
+
+        .health-tip-condition-header {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          margin-bottom: 10px;
+        }
+
+        .health-tip-condition-icon {
+          display: grid;
+          width: 40px;
+          height: 40px;
+          flex: 0 0 40px;
+          place-items: center;
+          border-radius: 12px;
+          color: var(--ion-color-primary);
+          background: rgba(var(--ion-color-primary-rgb), 0.12);
+        }
+
+        .health-tip-condition-icon ion-icon {
+          width: 21px;
+          height: 21px;
+        }
+
+        .health-tip-condition-copy {
+          min-width: 0;
+        }
+
+        .health-tip-condition h3 {
+          margin: 1px 0 4px;
+          color: #172033;
+          font-size: 1.02rem;
+          font-weight: 800;
+        }
+
+        .health-tip-condition-kicker {
+          color: var(--ion-color-primary);
+          font-size: 0.73rem;
+          font-weight: 800;
+          letter-spacing: 0.045em;
+          text-transform: uppercase;
+        }
+
+        .health-tip-summary {
+          margin: 0 0 14px;
+          color: #475467;
+          font-size: 0.93rem;
+          line-height: 1.55;
+        }
+
+        .health-tip-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .health-tip-box {
+          min-width: 0;
+          padding: 13px;
+          border: 1px solid #eaecf0;
+          border-left: 3px solid var(--ion-color-primary);
+          border-radius: 12px;
+          background: #f9fafb;
+        }
+
+        .health-tip-box.prioritize {
+          border-left-color: var(--ion-color-success);
+        }
+
+        .health-tip-box.avoid {
+          border-left-color: var(--ion-color-danger);
+        }
+
+        .health-tip-box.practical {
+          border-left-color: var(--ion-color-warning);
+        }
+
+        .health-tip-box-title {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          margin: 0 0 8px;
+          color: #344054;
+          font-size: 0.86rem;
+          font-weight: 800;
+        }
+
+        .health-tip-box-title ion-icon {
+          width: 17px;
+          height: 17px;
+          color: var(--ion-color-primary);
+        }
+
+        .health-tip-box.prioritize .health-tip-box-title ion-icon {
+          color: var(--ion-color-success);
+        }
+
+        .health-tip-box.avoid .health-tip-box-title ion-icon {
+          color: var(--ion-color-danger);
+        }
+
+        .health-tip-box.practical .health-tip-box-title ion-icon {
+          color: var(--ion-color-warning);
+        }
+
+        .health-tip-box ul {
+          margin: 0;
+          padding-left: 18px;
+          color: #475467;
+        }
+
+        .health-tip-box li {
+          margin-bottom: 6px;
+          font-size: 0.88rem;
+          line-height: 1.45;
+        }
+
+        .health-tip-box li:last-child {
+          margin-bottom: 0;
+        }
+
+        .health-tip-medical-note {
+          display: flex;
+          align-items: flex-start;
+          gap: 9px;
+          margin-top: 12px;
+          padding: 12px;
+          border: 1px solid rgba(var(--ion-color-warning-rgb), 0.25);
+          border-radius: 11px;
+          color: #69410a;
+          background: rgba(var(--ion-color-warning-rgb), 0.1);
+          font-size: 0.88rem;
+          line-height: 1.48;
+        }
+
+        .health-tip-medical-note ion-icon {
+          width: 18px;
+          height: 18px;
+          flex: 0 0 18px;
+          margin-top: 1px;
+          color: var(--ion-color-warning-shade);
+        }
+
+        .health-tip-source-block {
+          margin-top: 13px;
+          padding-top: 12px;
+          border-top: 1px solid #eaecf0;
+        }
+
+        .health-tip-source-label {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 8px;
+          color: #667085;
+          font-size: 0.78rem;
+          font-weight: 700;
+        }
+
+        .health-tip-source-label ion-icon {
+          width: 16px;
+          height: 16px;
+          color: var(--ion-color-primary);
+        }
+
+        .health-tip-sources {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .health-tip-sources a,
+        .health-tip-sources span {
+          display: inline-flex;
+          align-items: center;
+          min-height: 30px;
+          padding: 6px 10px;
+          border: 1px solid rgba(var(--ion-color-primary-rgb), 0.18);
+          border-radius: 999px;
+          color: var(--ion-color-primary);
+          background: rgba(var(--ion-color-primary-rgb), 0.08);
+          font-size: 0.76rem;
+          font-weight: 750;
+          line-height: 1.2;
+          text-decoration: none;
+        }
+
+        .health-tip-sources a:hover {
+          background: rgba(var(--ion-color-primary-rgb), 0.14);
+        }
+
+        .health-general-tips-card .tips-list,
+        .meal-prep-tips-card .tips-list {
+          margin-top: 0;
+        }
+
         @media (max-width: 767px) {
+          .health-tip-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .health-tip-card ion-card-header,
+          .health-general-tips-card ion-card-header,
+          .meal-prep-tips-card ion-card-header {
+            padding: 14px 15px;
+          }
+
+          .health-tip-card ion-card-content {
+            padding: 12px;
+          }
+
+          .health-tip-condition {
+            padding: 13px;
+            border-radius: 13px;
+          }
+
+          .health-tip-condition-icon {
+            width: 36px;
+            height: 36px;
+            flex-basis: 36px;
+            border-radius: 10px;
+          }
           .meal-toolbar {
             --min-height: 60px;
             --padding-start: 2px;
@@ -2289,7 +2948,7 @@ const MealPlanner: React.FC = () => {
                   </IonItem>
                 </div>
 
-                <div className="form-group">
+                {/* <div className="form-group">
                   <IonItem className="custom-item">
                     <IonLabel position="stacked">
                       <IonIcon icon={flame} /> Fitness Goal
@@ -2309,7 +2968,7 @@ const MealPlanner: React.FC = () => {
                       </IonSelectOption>
                     </IonSelect>
                   </IonItem>
-                </div>
+                </div> */}
 
                 <div className="form-subsection">
                   <h3>Health Conditions</h3>
@@ -2770,25 +3429,25 @@ const MealPlanner: React.FC = () => {
                   <div className="summary-item">
                     <div className="summary-label">Calories (Target)</div>
                     <div className="summary-value">
-                      {todayPlanTotals.calories} /{" "}
+                      {todayPlanTotals.calories.toFixed(0)} /{" "}
                       {mealPlan.targetCalories ?? calorieTarget}
                     </div>
                   </div>
                   <div className="summary-item">
                     <div className="summary-label">Protein</div>
                     <div className="summary-value">
-                      {todayPlanTotals.protein}g
+                      {todayPlanTotals.protein.toFixed(2)}g
                     </div>
                   </div>
                   <div className="summary-item">
                     <div className="summary-label">Carbs</div>
                     <div className="summary-value">
-                      {todayPlanTotals.carbs}g
+                      {todayPlanTotals.carbs.toFixed(2)}g
                     </div>
                   </div>
                   <div className="summary-item">
                     <div className="summary-label">Fats</div>
-                    <div className="summary-value">{todayPlanTotals.fats}g</div>
+                    <div className="summary-value">{todayPlanTotals.fats.toFixed(2)}g</div>
                   </div>
                 </div>
 
@@ -3163,9 +3822,164 @@ const MealPlanner: React.FC = () => {
               </IonCard>
             )}
 
-            {/* Meal Prep Tips & Nutrition Tips */}
+            {/* Health-condition explanations returned by the backend */}
+            {mealPlan &&
+              Array.isArray(mealPlan.healthConditionTips) &&
+              mealPlan.healthConditionTips.length > 0 && (
+                <IonCard className="info-card health-tip-card">
+                  <IonCardHeader>
+                    <IonCardTitle>
+                      <IonIcon icon={warning} /> Why These Meals Were Chosen
+                    </IonCardTitle>
+                  </IonCardHeader>
+                  <IonCardContent>
+                    {mealPlan.healthConditionTips.map((tip, tipIndex) => (
+                      <section
+                        className="health-tip-condition"
+                        key={`${tip.condition || tip.label}-${tipIndex}`}
+                      >
+                        <div className="health-tip-condition-header">
+                          <div className="health-tip-condition-icon">
+                            <IonIcon icon={nutrition} />
+                          </div>
+                          <div className="health-tip-condition-copy">
+                            <div className="health-tip-condition-kicker">
+                              Health-aware meal guidance
+                            </div>
+                            <h3>{tip.label || "Health condition"}</h3>
+                          </div>
+                        </div>
+
+                        {tip.summary && (
+                          <p className="health-tip-summary">{tip.summary}</p>
+                        )}
+
+                        <div className="health-tip-grid">
+                          {tip.whyMealPlanChanged.length > 0 && (
+                            <div className="health-tip-box reason">
+                              <h4 className="health-tip-box-title">
+                                <IonIcon icon={checkmarkCircle} />
+                                Why the plan changed
+                              </h4>
+                              <ul>
+                                {tip.whyMealPlanChanged.map((item, idx) => (
+                                  <li key={idx}>{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {tip.foodsToPrioritize.length > 0 && (
+                            <div className="health-tip-box prioritize">
+                              <h4 className="health-tip-box-title">
+                                <IonIcon icon={nutrition} />
+                                Choose more often
+                              </h4>
+                              <ul>
+                                {tip.foodsToPrioritize.map((item, idx) => (
+                                  <li key={idx}>{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {tip.foodsToLimitOrAvoid.length > 0 && (
+                            <div className="health-tip-box avoid">
+                              <h4 className="health-tip-box-title">
+                                <IonIcon icon={warning} />
+                                Limit or avoid
+                              </h4>
+                              <ul>
+                                {tip.foodsToLimitOrAvoid.map((item, idx) => (
+                                  <li key={idx}>{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {tip.practicalTips.length > 0 && (
+                            <div className="health-tip-box practical">
+                              <h4 className="health-tip-box-title">
+                                <IonIcon icon={bulb} />
+                                Practical reminders
+                              </h4>
+                              <ul>
+                                {tip.practicalTips.map((item, idx) => (
+                                  <li key={idx}>{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+
+                        {tip.medicalNote && (
+                          <div className="health-tip-medical-note">
+                            <IonIcon icon={warning} />
+                            <div>
+                              <strong>Medical note:</strong> {tip.medicalNote}
+                            </div>
+                          </div>
+                        )}
+
+                        {tip.citationIds.length > 0 && (
+                          <div className="health-tip-source-block">
+                            <div className="health-tip-source-label">
+                              <IonIcon icon={documents} />
+                              References used for this guidance
+                            </div>
+                            <div className="health-tip-sources">
+                              {tip.citationIds.map((citationId) => {
+                                const source = getCitationById(citationId);
+                                return source ? (
+                                  <a
+                                    key={citationId}
+                                    href={source.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {source.organization || source.title}
+                                  </a>
+                                ) : (
+                                  <span key={citationId}>
+                                    {getCitationLabel(citationId)}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </section>
+                    ))}
+                  </IonCardContent>
+                </IonCard>
+              )}
+
+            {/* General nutrition tips remain compatible with older backends */}
+            {mealPlan &&
+              Array.isArray(mealPlan.nutritionTips) &&
+              mealPlan.nutritionTips.length > 0 && (
+                <IonCard className="info-card tips-card health-general-tips-card">
+                  <IonCardHeader>
+                    <IonCardTitle>
+                      <IonIcon icon={nutrition} /> Nutrition & Health Tips
+                    </IonCardTitle>
+                  </IonCardHeader>
+                  <IonCardContent>
+                    <ul className="tips-list">
+                      {mealPlan.nutritionTips.map((tip, idx) => (
+                        <li key={idx}>
+                          <IonIcon icon={listCircle} className="tip-icon" />
+                          <span>{tip}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </IonCardContent>
+                </IonCard>
+              )}
+
+            {/* Meal Prep Tips */}
             {mealPlan && (
-              <IonCard className="info-card tips-card">
+              <IonCard className="info-card tips-card meal-prep-tips-card">
                 <IonCardHeader>
                   <IonCardTitle>
                     <IonIcon icon={bulb} /> Meal Prep Tips
@@ -3202,9 +4016,14 @@ const MealPlanner: React.FC = () => {
                     <ul className="source-list">
                       {mealPlan.citations.map((source) => (
                         <li key={source.id}>
-                          <a href={source.url} target="_blank" rel="noreferrer">
+                          <a
+                            href={source.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
                             {source.organization}: {source.title}
                           </a>
+                          {source.summary && <p>{source.summary}</p>}
                         </li>
                       ))}
                     </ul>
@@ -3383,7 +4202,7 @@ const MealPlanner: React.FC = () => {
                                 <a
                                   href={source.url}
                                   target="_blank"
-                                  rel="noreferrer"
+                                  rel="noopener noreferrer"
                                 >
                                   {source.organization}: {source.title}
                                 </a>

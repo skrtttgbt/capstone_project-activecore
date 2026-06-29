@@ -2422,3 +2422,474 @@ ion-content.mp-modal-content {
 .mp-modal-actions ion-button {
   margin-top: 8px;
 }
+
+/* =========================================================
+   HEALTH-CONDITION TIPS — DARK GREEN MEAL PLANNER THEME
+   Append this block to the END of MealPlanner.css.
+   It overrides the light health-tip styles inside MealPlanner.tsx.
+   ========================================================= */
+
+/* Shared card shell: same appearance as Shopping List / Meal Prep cards */
+.meal-planner-content .meal-plan-display .health-tip-card,
+.meal-planner-content .meal-plan-display .health-general-tips-card,
+.meal-planner-content .meal-plan-display .meal-prep-tips-card {
+  --background: #1e1e1e !important;
+  --color: #ffffff !important;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto 1.5rem !important;
+  overflow: hidden;
+  border: 1px solid rgba(0, 230, 118, 0.22) !important;
+  border-radius: 16px !important;
+  background: #1e1e1e !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5) !important;
+}
+
+.meal-planner-content .meal-plan-display .health-tip-card ion-card-header,
+.meal-planner-content .meal-plan-display .health-general-tips-card ion-card-header,
+.meal-planner-content .meal-plan-display .meal-prep-tips-card ion-card-header {
+  --background: #1e1e1e !important;
+  --color: #ffffff !important;
+  padding: 1rem 1.25rem !important;
+  border-bottom: 1px solid rgba(0, 230, 118, 0.22) !important;
+  background:
+    linear-gradient(135deg, rgba(0, 230, 118, 0.12), rgba(0, 200, 83, 0.04)),
+    #1e1e1e !important;
+}
+
+.meal-planner-content .meal-plan-display .health-tip-card ion-card-title,
+.meal-planner-content .meal-plan-display .health-general-tips-card ion-card-title,
+.meal-planner-content .meal-plan-display .meal-prep-tips-card ion-card-title {
+  --color: #00e676 !important;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0;
+  color: #00e676 !important;
+  font-size: 1.15rem !important;
+  font-weight: 700 !important;
+  line-height: 1.3;
+  text-shadow: 0 0 15px rgba(0, 230, 118, 0.22);
+}
+
+.meal-planner-content .meal-plan-display .health-tip-card ion-card-title ion-icon,
+.meal-planner-content .meal-plan-display .health-general-tips-card ion-card-title ion-icon,
+.meal-planner-content .meal-plan-display .meal-prep-tips-card ion-card-title ion-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  color: #00e676 !important;
+}
+
+.meal-planner-content .meal-plan-display .health-tip-card ion-card-content,
+.meal-planner-content .meal-plan-display .health-general-tips-card ion-card-content,
+.meal-planner-content .meal-plan-display .meal-prep-tips-card ion-card-content {
+  --background: #1e1e1e !important;
+  --color: #ffffff !important;
+  padding: 1.25rem !important;
+  background: #1e1e1e !important;
+  color: #ffffff !important;
+}
+
+/* One card per selected health condition */
+.meal-planner-content .health-tip-condition {
+  margin: 0 0 1rem;
+  padding: 1rem;
+  overflow: hidden;
+  border: 1px solid rgba(0, 230, 118, 0.18) !important;
+  border-left: 4px solid #00e676 !important;
+  border-radius: 14px !important;
+  background: linear-gradient(135deg, #181818 0%, #232323 100%) !important;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35) !important;
+  transition:
+    transform 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.22s ease;
+}
+
+.meal-planner-content .health-tip-condition:last-child {
+  margin-bottom: 0;
+}
+
+.meal-planner-content .health-tip-condition:hover {
+  transform: translateY(-2px);
+  border-color: rgba(0, 230, 118, 0.5) !important;
+  box-shadow: 0 7px 22px rgba(0, 230, 118, 0.1) !important;
+}
+
+.meal-planner-content .health-tip-condition-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  margin-bottom: 0.75rem;
+}
+
+.meal-planner-content .health-tip-condition-icon {
+  display: grid !important;
+  width: 42px !important;
+  height: 42px !important;
+  flex: 0 0 42px !important;
+  place-items: center;
+  border: 1px solid rgba(0, 230, 118, 0.28);
+  border-radius: 12px !important;
+  color: #00e676 !important;
+  background: rgba(0, 230, 118, 0.12) !important;
+  box-shadow: inset 0 0 12px rgba(0, 230, 118, 0.06);
+}
+
+.meal-planner-content .health-tip-condition-icon ion-icon {
+  width: 22px;
+  height: 22px;
+  color: #00e676 !important;
+}
+
+.meal-planner-content .health-tip-condition-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.meal-planner-content .health-tip-condition-kicker {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: #7efc6a !important;
+  font-size: 0.72rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.075em !important;
+  text-transform: uppercase;
+}
+
+.meal-planner-content .health-tip-condition h3 {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  color: #ffffff !important;
+  font-size: 1.08rem !important;
+  font-weight: 700 !important;
+  line-height: 1.35;
+  text-shadow: none !important;
+}
+
+.meal-planner-content .health-tip-summary {
+  margin: 0 0 1rem !important;
+  color: #c8c8c8 !important;
+  font-size: 0.94rem !important;
+  line-height: 1.65 !important;
+}
+
+/* Four information panels: reason, prioritize, avoid, practical */
+.meal-planner-content .health-tip-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 0.75rem !important;
+}
+
+.meal-planner-content .health-tip-box {
+  min-width: 0;
+  padding: 0.9rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  border-left: 3px solid #00e676 !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  color: #ffffff !important;
+}
+
+.meal-planner-content .health-tip-box.reason {
+  border-left-color: #00e676 !important;
+  background: rgba(0, 230, 118, 0.055) !important;
+}
+
+.meal-planner-content .health-tip-box.prioritize {
+  border-left-color: #69f0ae !important;
+  background: rgba(105, 240, 174, 0.055) !important;
+}
+
+.meal-planner-content .health-tip-box.avoid {
+  border-left-color: #ff5252 !important;
+  background: rgba(255, 82, 82, 0.055) !important;
+}
+
+.meal-planner-content .health-tip-box.practical {
+  border-left-color: #ffb300 !important;
+  background: rgba(255, 179, 0, 0.055) !important;
+}
+
+.meal-planner-content .health-tip-box-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.65rem !important;
+  color: #ffffff !important;
+  font-size: 0.88rem !important;
+  font-weight: 700 !important;
+  line-height: 1.3;
+}
+
+.meal-planner-content .health-tip-box-title ion-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  color: #00e676 !important;
+}
+
+.meal-planner-content .health-tip-box.prioritize .health-tip-box-title ion-icon {
+  color: #69f0ae !important;
+}
+
+.meal-planner-content .health-tip-box.avoid .health-tip-box-title ion-icon {
+  color: #ff5252 !important;
+}
+
+.meal-planner-content .health-tip-box.practical .health-tip-box-title ion-icon {
+  color: #ffb300 !important;
+}
+
+.meal-planner-content .health-tip-box ul {
+  margin: 0 !important;
+  padding: 0 !important;
+  list-style: none;
+}
+
+.meal-planner-content .health-tip-box li {
+  position: relative;
+  margin: 0 0 0.5rem !important;
+  padding: 0 0 0 1rem !important;
+  color: #c8c8c8 !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  font-size: 0.88rem !important;
+  line-height: 1.5 !important;
+  transform: none !important;
+}
+
+.meal-planner-content .health-tip-box li::before {
+  content: "•";
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: #00e676;
+  font-weight: 800;
+}
+
+.meal-planner-content .health-tip-box.prioritize li::before {
+  color: #69f0ae;
+}
+
+.meal-planner-content .health-tip-box.avoid li::before {
+  color: #ff5252;
+}
+
+.meal-planner-content .health-tip-box.practical li::before {
+  color: #ffb300;
+}
+
+.meal-planner-content .health-tip-box li:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Medical disclaimer / clinician note */
+.meal-planner-content .health-tip-medical-note {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin-top: 0.85rem !important;
+  padding: 0.8rem 0.9rem !important;
+  border: 1px solid rgba(255, 179, 0, 0.3) !important;
+  border-left: 3px solid #ffb300 !important;
+  border-radius: 10px !important;
+  color: #ffe6a3 !important;
+  background: rgba(255, 179, 0, 0.09) !important;
+  font-size: 0.87rem !important;
+  line-height: 1.55 !important;
+}
+
+.meal-planner-content .health-tip-medical-note ion-icon {
+  width: 19px !important;
+  height: 19px !important;
+  flex: 0 0 19px !important;
+  margin-top: 0.1rem;
+  color: #ffb300 !important;
+}
+
+/* References connected to each health condition */
+.meal-planner-content .health-tip-source-block {
+  margin-top: 0.9rem !important;
+  padding-top: 0.85rem !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.09) !important;
+}
+
+.meal-planner-content .health-tip-source-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem !important;
+  color: #9bd8b4 !important;
+  font-size: 0.79rem !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.meal-planner-content .health-tip-source-label ion-icon {
+  width: 16px;
+  height: 16px;
+  color: #00e676 !important;
+}
+
+.meal-planner-content .health-tip-sources {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 0.5rem !important;
+}
+
+.meal-planner-content .health-tip-sources a,
+.meal-planner-content .health-tip-sources span {
+  display: inline-flex !important;
+  align-items: center;
+  min-height: 32px !important;
+  padding: 0.42rem 0.7rem !important;
+  border: 1px solid rgba(0, 230, 118, 0.28) !important;
+  border-radius: 999px !important;
+  color: #8be04b !important;
+  background: rgba(0, 230, 118, 0.08) !important;
+  font-size: 0.76rem !important;
+  font-weight: 700 !important;
+  line-height: 1.25 !important;
+  text-decoration: none !important;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.meal-planner-content .health-tip-sources a:hover,
+.meal-planner-content .health-tip-sources a:focus-visible {
+  color: #000000 !important;
+  border-color: #00e676 !important;
+  background: #00e676 !important;
+  outline: none;
+  transform: translateY(-1px);
+}
+
+/* Legacy/general nutrition tips use the same existing list style */
+.meal-planner-content .health-general-tips-card .tips-list,
+.meal-planner-content .meal-prep-tips-card .tips-list {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.meal-planner-content .health-general-tips-card .tips-list li,
+.meal-planner-content .meal-prep-tips-card .tips-list li {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-left: 3px solid #00e676 !important;
+}
+
+.meal-planner-content .health-general-tips-card .tips-list li:hover,
+.meal-planner-content .meal-prep-tips-card .tips-list li:hover {
+  background: rgba(0, 230, 118, 0.1) !important;
+}
+
+/* Main Sources card: maintain the same dark card and readable links */
+.meal-planner-content .citations-card .source-list li {
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(0, 230, 118, 0.14);
+  border-left: 3px solid #00e676;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.meal-planner-content .citations-card .source-list a {
+  color: #8be04b !important;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.meal-planner-content .citations-card .source-list a:hover,
+.meal-planner-content .citations-card .source-list a:focus-visible {
+  color: #00e676 !important;
+  text-decoration: underline;
+  outline: none;
+}
+
+/* Responsive layout */
+@media (max-width: 767px) {
+  .meal-planner-content .meal-plan-display .health-tip-card,
+  .meal-planner-content .meal-plan-display .health-general-tips-card,
+  .meal-planner-content .meal-plan-display .meal-prep-tips-card {
+    width: calc(100% - 1.5rem);
+    margin-bottom: 1rem !important;
+    border-radius: 14px !important;
+  }
+
+  .meal-planner-content .meal-plan-display .health-tip-card ion-card-header,
+  .meal-planner-content .meal-plan-display .health-general-tips-card ion-card-header,
+  .meal-planner-content .meal-plan-display .meal-prep-tips-card ion-card-header {
+    padding: 0.9rem 1rem !important;
+  }
+
+  .meal-planner-content .meal-plan-display .health-tip-card ion-card-content,
+  .meal-planner-content .meal-plan-display .health-general-tips-card ion-card-content,
+  .meal-planner-content .meal-plan-display .meal-prep-tips-card ion-card-content {
+    padding: 0.85rem !important;
+  }
+
+  .meal-planner-content .health-tip-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .meal-planner-content .health-tip-condition {
+    padding: 0.85rem !important;
+    border-radius: 12px !important;
+  }
+
+  .meal-planner-content .health-tip-condition-icon {
+    width: 38px !important;
+    height: 38px !important;
+    flex-basis: 38px !important;
+  }
+
+  .meal-planner-content .health-tip-condition h3 {
+    font-size: 1rem !important;
+  }
+
+  .meal-planner-content .health-tip-summary {
+    font-size: 0.9rem !important;
+  }
+
+  .meal-planner-content .health-tip-sources a,
+  .meal-planner-content .health-tip-sources span {
+    max-width: 100%;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 360px) {
+  .meal-planner-content .health-tip-condition-header {
+    gap: 0.6rem;
+  }
+
+  .meal-planner-content .health-tip-condition-icon {
+    width: 34px !important;
+    height: 34px !important;
+    flex-basis: 34px !important;
+  }
+
+  .meal-planner-content .health-tip-box {
+    padding: 0.75rem !important;
+  }
+
+  .meal-planner-content .health-tip-sources {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .meal-planner-content .health-tip-sources a,
+  .meal-planner-content .health-tip-sources span {
+    justify-content: center;
+    width: 100%;
+    text-align: center;
+  }
+}
