@@ -7866,7 +7866,36 @@ app.delete('/api/equipment/:id', authenticateToken, requireAdmin, async (req: Au
 });
 
 // App configuration
-const APP_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:3000').trim().replace(/\/$/, '');
+function resolveFrontendBaseUrl(req?: Request): string {
+  const envValue = (process.env.APP_URL || process.env.FRONTEND_URL || '').trim().replace(/\/$/, '');
+  if (envValue) return envValue;
+
+  const originHeader = req?.headers?.origin;
+  if (typeof originHeader === 'string' && originHeader.trim()) {
+    return originHeader.trim().replace(/\/$/, '');
+  }
+
+  const refererHeader = req?.headers?.referer;
+  if (typeof refererHeader === 'string' && refererHeader.trim()) {
+    try {
+      return new URL(refererHeader).origin;
+    } catch {
+      // ignore invalid referer
+    }
+  }
+
+  const forwardedHost = req?.headers?.['x-forwarded-host'];
+  if (typeof forwardedHost === 'string' && forwardedHost.trim()) {
+    const host = forwardedHost.split(',')[0].trim();
+    const proto = req?.headers?.['x-forwarded-proto'];
+    if (typeof proto === 'string' && proto.trim()) {
+      return `${proto.split(',')[0].trim()}://${host}`.replace(/\/$/, '');
+    }
+    return `https://${host}`.replace(/\/$/, '');
+  }
+
+  return 'http://localhost:3000';
+}
 
 // Helper function to get PayPal access token
 async function getPayPalAccessToken(): Promise<{ accessToken: string; apiBaseUrl: string }> {
@@ -8091,6 +8120,7 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
     const planDescription = normalizedPlan === 'monthly' ? 'Monthly Membership' : 
                            normalizedPlan === 'quarterly' ? 'Quarterly Membership' :
                            'Annual Membership';
+    const frontendBaseUrl = resolveFrontendBaseUrl(req);
 
     const payload = {
       intent: 'CAPTURE',
@@ -8109,8 +8139,8 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
         brand_name: 'ActiveCore Fitness',
         landing_page: 'BILLING',
         user_action: 'PAY_NOW',
-        return_url: `${APP_URL}/member/payment/success`,
-        cancel_url: `${APP_URL}/member/payment/failed`
+        return_url: `${frontendBaseUrl}/member/payment/success`,
+        cancel_url: `${frontendBaseUrl}/member/payment/failed`
       }
     };
 
