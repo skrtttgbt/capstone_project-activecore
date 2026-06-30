@@ -7869,54 +7869,72 @@ app.delete('/api/equipment/:id', authenticateToken, requireAdmin, async (req: Au
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
 // Helper function to get PayPal access token
-async function getPayPalAccessToken(): Promise<string> {
-  try {
-    // PayPal OAuth token endpoint is under v1; keep v2 for other APIs
-    const tokenUrl = `${PAYPAL_API_URL.replace(/\/v2$/, '')}/v1/oauth2/token`;
-    
-    debugLog('🔵 [PayPal Token] URL:', tokenUrl);
-    debugLog('🔵 [PayPal Token] Mode:', PAYPAL_MODE);
-    debugLog('🔵 [PayPal Token] Client ID prefix:', PAYPAL_CLIENT_ID?.substring(0, 10) + '...');
-    debugLog('🔵 [PayPal Token] Secret length:', PAYPAL_CLIENT_SECRET?.length);
-    
-    // Use Base64 encoding for auth header instead of axios auth
-    const credentials = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString('base64');
-    
-    debugLog('🔵 [PayPal Token] Credentials base64 length:', credentials.length);
-    
-    const response = await axios.post(
-      tokenUrl,
-      'grant_type=client_credentials',
-      {
-        headers: {
-          'Authorization': `Basic ${credentials}`,
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        timeout: 10000
-      }
-    );
-    
-    const tokenData = response.data as any;
-    debugLog('🟢 [PayPal Token] Success, token length:', tokenData.access_token?.length);
-    return tokenData.access_token;
-  } catch (error: any) {
-    if (isProduction) {
-      console.error('🔴 [PayPal Token] Failed:', {
-        message: error.message,
-        status: error.response?.status,
+async function getPayPalAccessToken(): Promise<{ accessToken: string; apiBaseUrl: string }> {
+  const apiBaseCandidates = [PAYPAL_API_URL];
+  if (PAYPAL_MODE !== 'sandbox') {
+    apiBaseCandidates.push('https://api.sandbox.paypal.com/v2');
+  }
+
+  let lastError: any;
+
+  for (const apiBaseUrl of apiBaseCandidates) {
+    try {
+      const tokenUrl = `${apiBaseUrl.replace(/\/v2$/, '')}/v1/oauth2/token`;
+
+      debugLog('🔵 [PayPal Token] URL:', tokenUrl);
+      debugLog('🔵 [PayPal Token] Mode:', PAYPAL_MODE);
+      debugLog('🔵 [PayPal Token] Client ID prefix:', PAYPAL_CLIENT_ID?.substring(0, 10) + '...');
+      debugLog('🔵 [PayPal Token] Secret length:', PAYPAL_CLIENT_SECRET?.length);
+
+      const credentials = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString('base64');
+      debugLog('🔵 [PayPal Token] Credentials base64 length:', credentials.length);
+
+      const response = await axios.post(
+        tokenUrl,
+        'grant_type=client_credentials',
+        {
+          headers: {
+            'Authorization': `Basic ${credentials}`,
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          timeout: 10000
+        }
+      );
+
+      const tokenData = response.data as any;
+      debugLog('🟢 [PayPal Token] Success:', {
+        tokenLength: tokenData.access_token?.length,
+        apiBaseUrl,
       });
-    } else {
-      console.error('🔴 [PayPal Token] Complete error:', {
+      return { accessToken: tokenData.access_token, apiBaseUrl };
+    } catch (error: any) {
+      lastError = error;
+      debugLog('⚠️ [PayPal Token] Attempt failed:', {
+        apiBaseUrl,
         message: error.message,
         status: error.response?.status,
-        statusText: error.response?.statusText,
         errorData: error.response?.data,
-        url: error.config?.url,
-        method: error.config?.method
       });
     }
-    throw new Error('PayPal authentication failed: ' + (error.response?.data?.error_description || error.message));
   }
+
+  if (isProduction) {
+    console.error('🔴 [PayPal Token] Failed:', {
+      message: lastError?.message,
+      status: lastError?.response?.status,
+    });
+  } else {
+    console.error('🔴 [PayPal Token] Complete error:', {
+      message: lastError?.message,
+      status: lastError?.response?.status,
+      statusText: lastError?.response?.statusText,
+      errorData: lastError?.response?.data,
+      url: lastError?.config?.url,
+      method: lastError?.config?.method
+    });
+  }
+
+  throw new Error('PayPal authentication failed: ' + (lastError?.response?.data?.error_description || lastError?.message));
 }
 
 function normalizeMembershipPlan(raw: any): 'monthly' | 'quarterly' | 'annual' {
@@ -8067,7 +8085,7 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
     }
 
     debugLog('🔵 [PayPal] Getting access token...');
-    const accessToken = await getPayPalAccessToken();
+    const { accessToken, apiBaseUrl } = await getPayPalAccessToken();
     debugLog('🟢 [PayPal] Access token obtained');
 
     const planDescription = normalizedPlan === 'monthly' ? 'Monthly Membership' : 
@@ -8098,7 +8116,7 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
 
     debugLog('🔵 [PayPal] Creating PayPal order with payload:', JSON.stringify(payload, null, 2));
 
-    const response = await axios.post(`${PAYPAL_API_URL}/checkout/orders`, payload, {
+    const response = await axios.post(`${apiBaseUrl}/checkout/orders`, payload, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
@@ -8207,11 +8225,11 @@ app.post('/api/payments/paypal/capture-order', paymentLimiter, async (req: AuthR
     }
     resolvedUserId = userId;
 
-    const accessToken = await getPayPalAccessToken();
+    const { accessToken, apiBaseUrl } = await getPayPalAccessToken();
 
     // Capture the payment
     const captureResponse = await axios.post(
-      `${PAYPAL_API_URL}/checkout/orders/${normalizedOrderId}/capture`,
+      `${apiBaseUrl}/checkout/orders/${normalizedOrderId}/capture`,
       {},
       {
         headers: {
