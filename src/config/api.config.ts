@@ -8,7 +8,22 @@ export const API_CONFIG = {
   // Base URL for backend API calls
   BASE_URL: (() => {
     const fromEnv = (process.env.REACT_APP_API_URL || '').trim();
-    if (fromEnv) return fromEnv.replace(/\/$/, '');
+    if (fromEnv) {
+      const normalized = fromEnv.replace(/\/$/, '');
+
+      if (/^https?:\/\//i.test(normalized)) {
+        try {
+          const url = new URL(normalized);
+          const pathname = url.pathname && url.pathname !== '/' ? url.pathname : '/api';
+          const withApiSuffix = pathname.endsWith('/api') ? pathname : `${pathname}/api`;
+          return `${url.origin}${withApiSuffix}`;
+        } catch {
+          return normalized;
+        }
+      }
+
+      return normalized;
+    }
 
     const nodeEnv = process.env.NODE_ENV;
 
