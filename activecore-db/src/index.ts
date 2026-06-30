@@ -8134,7 +8134,7 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
       custom_id: `${userId}|${normalizedPlan}` // Store userId and plan in custom_id
     }];
 
-    if (PAYPAL_RECEIVER_EMAIL) {
+    if (PAYPAL_RECEIVER_EMAIL && PAYPAL_RECEIVER_EMAIL.includes('@')) {
       purchaseUnits[0].payee = {
         email_address: PAYPAL_RECEIVER_EMAIL,
       };
