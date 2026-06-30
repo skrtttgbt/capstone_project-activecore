@@ -82,6 +82,21 @@ const PH_COMMON_DIETS: Array<{ value: string; label: string }> = [
   { value: "vegetarian", label: "🥬 Vegetarian" },
 ];
 
+type DietMacroProfile = {
+  proteinPercent: number;
+  carbsPercent: number;
+  fatsPercent: number;
+};
+
+const DIET_MACRO_PROFILES: Record<string, DietMacroProfile> = {
+  balanced: { proteinPercent: 20, carbsPercent: 50, fatsPercent: 30 },
+  high_protein: { proteinPercent: 30, carbsPercent: 40, fatsPercent: 30 },
+  low_carb: { proteinPercent: 30, carbsPercent: 25, fatsPercent: 45 },
+  low_fat: { proteinPercent: 20, carbsPercent: 60, fatsPercent: 20 },
+  low_sodium: { proteinPercent: 20, carbsPercent: 50, fatsPercent: 30 },
+  vegetarian: { proteinPercent: 20, carbsPercent: 55, fatsPercent: 25 },
+};
+
 const HEALTH_CONDITIONS: Array<{ value: string; label: string }> = [
   { value: "hypertension", label: "Hypertension" },
   { value: "diabetes", label: "Diabetes" },
@@ -145,6 +160,14 @@ const normalizeDietValue = (raw: any): string => {
   const allowed = new Set(PH_COMMON_DIETS.map((d) => d.value));
   return allowed.has(canonical) ? canonical : "";
 };
+
+const getMealTypeFromDiet = (dietValue: string): string => {
+  const normalized = normalizeDietValue(dietValue);
+  if (normalized === "high_protein") return "high_protein";
+  if (normalized === "low_carb") return "low_carb";
+  return "balanced";
+};
+
 
 const parseDelimitedSelection = (input: any): string[] => {
   if (!input) return [];
@@ -557,14 +580,10 @@ interface SavedMealPlan {
 const MealPlanner: React.FC = () => {
   // Form State
   const [lifestyle, setLifestyle] = useState<string>("moderate");
-  const [mealType, setMealType] = useState<string>("balanced");
-  const [goal, setGoal] = useState<string>("maintain");
+  const goal = "maintain";
   const [diet, setDiet] = useState<string>("");
   const [allergies, setAllergies] = useState<string[]>([]);
   const [calorieTarget, setCalorieTarget] = useState<number>(2000);
-  const [proteinTarget, setProteinTarget] = useState<number>(120);
-  const [carbsTarget, setCarbsTarget] = useState<number>(250);
-  const [fatsTarget, setFatsTarget] = useState<number>(65);
   const [age, setAge] = useState<number>(30);
   const [sex, setSex] = useState<string>("");
   const [heightCm, setHeightCm] = useState<number>(165);
@@ -669,9 +688,9 @@ const MealPlanner: React.FC = () => {
         setLifestyle(
           pref.lifestyle || lifestyleFactors.physicalActivity || "moderate",
         );
-        setMealType(pref.mealType || "balanced");
-        setGoal(pref.goal || "maintain");
-        setDiet(normalizeDietValue(pref.diet));
+        const storedDiet = normalizeDietValue(pref.diet);
+        const legacyDiet = normalizeDietValue(pref.mealType);
+        setDiet(storedDiet || legacyDiet);
         setAge(Number(demographics.age) || 30);
         setSex(String(demographics.sex || ""));
         setHeightCm(Number(demographics.heightCm) || 165);
@@ -709,19 +728,6 @@ const MealPlanner: React.FC = () => {
           setCalorieTarget(prefCalories);
         }
 
-        const prefProtein = Number(pref?.targets?.protein);
-        const prefCarbs = Number(pref?.targets?.carbs);
-        const prefFats = Number(pref?.targets?.fats);
-
-        if (Number.isFinite(prefProtein) && prefProtein > 0) {
-          setProteinTarget(prefProtein);
-        }
-        if (Number.isFinite(prefCarbs) && prefCarbs > 0) {
-          setCarbsTarget(prefCarbs);
-        }
-        if (Number.isFinite(prefFats) && prefFats > 0) {
-          setFatsTarget(prefFats);
-        }
       }
     } catch (error) {
       console.error("Error loading preferences:", error);
@@ -754,38 +760,44 @@ const MealPlanner: React.FC = () => {
     return Math.min(max, Math.max(min, parsed));
   };
 
-  // Calories are the source of truth. The entered macros are proportionally
-  // aligned before being sent so they cannot contradict the calorie target.
+  // Calories remain user-controlled. Protein, carbohydrate, and fat targets
+  // are derived automatically from the selected Diet Type.
   const getCalorieAlignedTargets = () => {
     const calories = Math.round(boundedNumber(calorieTarget, 2000, 800, 5000));
-    const protein = boundedNumber(proteinTarget, 120, 20, 350);
-    const carbs = boundedNumber(carbsTarget, 250, 20, 800);
-    const fats = boundedNumber(fatsTarget, 65, 10, 250);
-    const macroCalories = protein * 4 + carbs * 4 + fats * 9;
+    const normalizedDiet = normalizeDietValue(diet);
+    const profile =
+      DIET_MACRO_PROFILES[normalizedDiet || "balanced"] ??
+      DIET_MACRO_PROFILES.balanced;
 
-    if (!Number.isFinite(macroCalories) || macroCalories <= 0) {
-      return { calories, protein, carbs, fats };
-    }
+    const protein = Number(
+      ((calories * (profile.proteinPercent / 100)) / 4).toFixed(2),
+    );
+    const fats = Number(
+      ((calories * (profile.fatsPercent / 100)) / 9).toFixed(2),
+    );
+    let carbs = Number(
+      ((calories * (profile.carbsPercent / 100)) / 4).toFixed(2),
+    );
 
-    const scale = calories / macroCalories;
-    const alignedProtein = Number((protein * scale).toFixed(2));
-    const alignedFats = Number((fats * scale).toFixed(2));
-    let alignedCarbs = Number((carbs * scale).toFixed(2));
-
-    // Put the tiny decimal correction into carbohydrates so 4P + 4C + 9F
-    // resolves to the exact requested calorie target.
-    const alignedCalories =
-      alignedProtein * 4 + alignedCarbs * 4 + alignedFats * 9;
-    alignedCarbs = Math.max(
+    // Apply any decimal correction to carbohydrates so the derived macro
+    // calories resolve to the exact requested calorie target.
+    const calculatedCalories = protein * 4 + carbs * 4 + fats * 9;
+    carbs = Math.max(
       0,
-      Number((alignedCarbs + (calories - alignedCalories) / 4).toFixed(2)),
+      Number((carbs + (calories - calculatedCalories) / 4).toFixed(2)),
     );
 
     return {
       calories,
-      protein: alignedProtein,
-      carbs: alignedCarbs,
-      fats: alignedFats,
+      protein,
+      carbs,
+      fats,
+      macroProfile: normalizedDiet || "balanced",
+      macroPercentages: {
+        protein: profile.proteinPercent,
+        carbs: profile.carbsPercent,
+        fats: profile.fatsPercent,
+      },
     };
   };
 
@@ -794,7 +806,7 @@ const MealPlanner: React.FC = () => {
 
     return {
       lifestyle,
-      mealType,
+      mealType: getMealTypeFromDiet(diet),
       goal,
       diet,
       allergies,
@@ -1085,24 +1097,12 @@ const MealPlanner: React.FC = () => {
         const recommendedCalories = Number(
           params.get("recommendedCalories") || stored?.calories || 0,
         );
-        const recommendedGoal = String(
-          params.get("recommendedGoal") || stored?.mealPlannerGoal || "",
-        );
-
         if (
           Number.isFinite(recommendedCalories) &&
           recommendedCalories >= 800 &&
           recommendedCalories <= 5000
         ) {
           setCalorieTarget(Math.round(recommendedCalories));
-        }
-
-        if (
-          recommendedGoal === "maintain" ||
-          recommendedGoal === "weight_loss" ||
-          recommendedGoal === "muscle_gain"
-        ) {
-          setGoal(recommendedGoal);
         }
 
         if (storedRaw) {
@@ -1183,7 +1183,9 @@ const MealPlanner: React.FC = () => {
       const token = getStoredToken();
       const body = {
         planId: currentPlanId || undefined,
-        planName: planName || `${goal} - ${mealType} Plan`,
+        planName:
+          planName ||
+          `${normalizeDietValue(diet) || "balanced"} Meal Plan`,
         mealPlan,
       };
 
@@ -2059,7 +2061,7 @@ const MealPlanner: React.FC = () => {
         mealType: mealKey,
         mealPlan: mealPlan.weekPlan ?? mealPlan,
         planId: currentPlanId ?? null,
-        preference: mealType,
+        preference: getMealTypeFromDiet(diet),
       };
 
       let json: any = null;
@@ -2303,6 +2305,8 @@ const MealPlanner: React.FC = () => {
       setLoading(false);
     }
   }
+
+  const automaticMacroTargets = getCalorieAlignedTargets();
 
   return (
     <IonPage>
@@ -2927,52 +2931,8 @@ const MealPlanner: React.FC = () => {
                 </div>
 
                 <div className="form-group">
-                  <IonItem className="custom-item">
-                    <IonLabel position="stacked">
-                      <IonIcon icon={restaurant} /> Meal Preference
-                    </IonLabel>
-                    <IonSelect
-                      value={mealType}
-                      onIonChange={(e) => setMealType(e.detail.value!)}
-                    >
-                      <IonSelectOption value="balanced">
-                        ⚖️ Balanced (Carbs, Protein, Fats)
-                      </IonSelectOption>
-                      <IonSelectOption value="high_protein">
-                        💪 High Protein (Muscle Building)
-                      </IonSelectOption>
-                      <IonSelectOption value="low_carb">
-                        🥗 Low Carb (Fat Loss)
-                      </IonSelectOption>
-                    </IonSelect>
-                  </IonItem>
-                </div>
-
-                {/* <div className="form-group">
-                  <IonItem className="custom-item">
-                    <IonLabel position="stacked">
-                      <IonIcon icon={flame} /> Fitness Goal
-                    </IonLabel>
-                    <IonSelect
-                      value={goal}
-                      onIonChange={(e) => setGoal(e.detail.value!)}
-                    >
-                      <IonSelectOption value="muscle_gain">
-                        💪 Muscle Gain
-                      </IonSelectOption>
-                      <IonSelectOption value="weight_loss">
-                        🔥 Weight Loss
-                      </IonSelectOption>
-                      <IonSelectOption value="maintain">
-                        ⚖️ Maintenance
-                      </IonSelectOption>
-                    </IonSelect>
-                  </IonItem>
-                </div> */}
-
-                <div className="form-subsection">
                   <h3>Health Conditions</h3>
-                  <IonItem className="custom-item" lines="none">
+                  <IonItem className="custom-item" >
                     <IonLabel position="stacked">
                       <IonIcon icon={warning} /> Conditions
                     </IonLabel>
@@ -3024,6 +2984,16 @@ const MealPlanner: React.FC = () => {
                         ))}
                       </IonSelect>
                     </IonItem>
+                  </div>
+
+                  <div className="restriction-chip">
+                    <IonIcon icon={nutrition} />
+                    <IonLabel>
+                      Automatic daily macros:{" "}
+                      {automaticMacroTargets.protein.toFixed(2)}g protein •{" "}
+                      {automaticMacroTargets.carbs.toFixed(2)}g carbs •{" "}
+                      {automaticMacroTargets.fats.toFixed(2)}g fats
+                    </IonLabel>
                   </div>
 
                   <div className="form-group">
@@ -3122,7 +3092,7 @@ const MealPlanner: React.FC = () => {
                 </div>
 
                 <div className="form-subsection targets-section">
-                  <h3>Calorie and Macronutrient Goals</h3>
+                  <h3>Daily Calorie Goal</h3>
 
                   <div className="form-group calorie-target-section">
                     <IonItem className="custom-item">
@@ -3143,50 +3113,6 @@ const MealPlanner: React.FC = () => {
                       />
                     </IonItem>
                   </div>
-
-                  <IonGrid className="targets-grid">
-                    <IonRow>
-                      <IonCol size="12" sizeMd="4">
-                        <IonItem className="custom-item">
-                          <IonLabel position="stacked">Protein (g)</IonLabel>
-                          <IonInput
-                            type="number"
-                            value={proteinTarget}
-                            onIonInput={(e) =>
-                              setProteinTarget(Number(e.detail.value) || 120)
-                            }
-                            className="custom-input"
-                          />
-                        </IonItem>
-                      </IonCol>
-                      <IonCol size="12" sizeMd="4">
-                        <IonItem className="custom-item">
-                          <IonLabel position="stacked">Carbs (g)</IonLabel>
-                          <IonInput
-                            type="number"
-                            value={carbsTarget}
-                            onIonInput={(e) =>
-                              setCarbsTarget(Number(e.detail.value) || 250)
-                            }
-                            className="custom-input"
-                          />
-                        </IonItem>
-                      </IonCol>
-                      <IonCol size="12" sizeMd="4">
-                        <IonItem className="custom-item">
-                          <IonLabel position="stacked">Fats (g)</IonLabel>
-                          <IonInput
-                            type="number"
-                            value={fatsTarget}
-                            onIonInput={(e) =>
-                              setFatsTarget(Number(e.detail.value) || 65)
-                            }
-                            className="custom-input"
-                          />
-                        </IonItem>
-                      </IonCol>
-                    </IonRow>
-                  </IonGrid>
                 </div>
 
                 <div className="form-subsection">

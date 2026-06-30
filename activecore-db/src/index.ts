@@ -1122,14 +1122,14 @@ function buildMealPlannerCkdProfile(reqBody: any, healthConditions: string[], su
 
 function buildMealPlannerHealthRuleContext(profile: any, requestedTargets: any, goal: any, diet: string): MealPlannerHealthRuleContext {
   const conditions = Array.isArray(profile?.healthConditions) ? profile.healthConditions : [];
-  const targets = requestedTargets && typeof requestedTargets === 'object' ? { ...requestedTargets } : {};
+  let effectiveDiet = normalizeDietType(diet);
+  const targets = deriveMealPlannerTargetsFromDiet(requestedTargets, effectiveDiet);
   const ckd = profile?.ckdProfile as MealPlannerCkdProfile;
   const hardAvoidKeywords: string[] = [];
   const promptRules: string[] = [];
   const cautions: string[] = [];
   const validationErrors: string[] = [];
   const limits: Record<string, any> = {};
-  let effectiveDiet = normalizeDietType(diet);
 
   if (conditions.includes('hypertension')) {
     const sodiumMg = Math.round(mealPlannerOptionalPositiveNumber(targets.sodiumMg) ?? 2000);
@@ -1177,6 +1177,12 @@ function buildMealPlannerHealthRuleContext(profile: any, requestedTargets: any, 
       validationErrors.push('A clinician-prescribed protein target is required for kidney-transplant meal planning.');
     }
 
+    if (effectiveDiet === 'high_protein') {
+      effectiveDiet = '';
+      Object.assign(targets, deriveMealPlannerTargetsFromDiet(targets, effectiveDiet));
+      cautions.push('The selected high-protein diet was overridden because CKD protein targets take priority.');
+    }
+
     if (ckd.referenceWeightKg) {
       const isDialysis = ckd.treatment === 'hemodialysis' || ckd.treatment === 'peritoneal_dialysis';
       const defaultGPerKg = isDialysis ? 1.1 : 0.8;
@@ -1208,11 +1214,6 @@ function buildMealPlannerHealthRuleContext(profile: any, requestedTargets: any, 
     }
     if (ckd.serumPhosphorusStatus === 'high' || ckd.prescribedPhosphorusMg) {
       hardAvoidKeywords.push('cola', 'processed cheese', 'organ meat', 'chicken liver', 'protein powder', 'phosphate additive');
-    }
-
-    if (effectiveDiet === 'high_protein') {
-      effectiveDiet = '';
-      cautions.push('The selected high-protein diet was overridden because CKD protein targets take priority.');
     }
 
     promptRules.push(`CKD: stage ${ckd.stage || 'missing'}, treatment ${ckd.treatment || 'missing'}, metabolically stable ${ckd.metabolicallyStable === null ? 'missing' : ckd.metabolicallyStable ? 'yes' : 'no'}. Daily protein must stay near ${targets.protein ?? 'the clinician-prescribed'} g and sodium at or below ${targets.sodiumMg} mg. A muscle-gain or high-protein goal must never override this limit.`);
@@ -3061,6 +3062,56 @@ function normalizeDietType(input: any): string {
     return aliases[canonical];
   }
   return canonical;
+}
+
+
+type MealPlannerMacroPercentages = {
+  protein: number;
+  carbs: number;
+  fats: number;
+};
+
+const MEAL_PLANNER_MACRO_PERCENTAGES_BY_DIET: Record<string, MealPlannerMacroPercentages> = {
+  balanced: { protein: 20, carbs: 50, fats: 30 },
+  high_protein: { protein: 30, carbs: 40, fats: 30 },
+  low_carb: { protein: 30, carbs: 25, fats: 45 },
+  low_fat: { protein: 20, carbs: 60, fats: 20 },
+  low_sodium: { protein: 20, carbs: 50, fats: 30 },
+  vegetarian: { protein: 20, carbs: 55, fats: 25 },
+};
+
+function deriveMealPlannerTargetsFromDiet(requestedTargets: any, dietInput: any): any {
+  const source = requestedTargets && typeof requestedTargets === 'object'
+    ? { ...requestedTargets }
+    : {};
+
+  const rawCalories = Number(source.calories);
+  const calories = Math.round(
+    Number.isFinite(rawCalories)
+      ? Math.min(5000, Math.max(800, rawCalories))
+      : 2000
+  );
+
+  const normalizedDiet = normalizeDietType(dietInput);
+  const macroProfile = normalizedDiet || 'balanced';
+  const percentages =
+    MEAL_PLANNER_MACRO_PERCENTAGES_BY_DIET[macroProfile]
+    || MEAL_PLANNER_MACRO_PERCENTAGES_BY_DIET.balanced;
+
+  const protein = Number(((calories * percentages.protein / 100) / 4).toFixed(2));
+  const carbs = Number(((calories * percentages.carbs / 100) / 4).toFixed(2));
+  const fats = Number(((calories * percentages.fats / 100) / 9).toFixed(2));
+
+  return {
+    ...source,
+    calories,
+    protein,
+    carbs,
+    fats,
+    macroProfile,
+    macroPercentages: { ...percentages },
+    macroTargetSource: 'diet_type',
+  };
 }
 
 function humanizeDietType(input: any): string {
@@ -5708,7 +5759,7 @@ OUTPUT REQUIREMENTS
        */
       weekPlan = generateWeekPlan(
         null,
-        targets,
+        effectiveTargets,
         goal,
         allRestrictionTokens,
         randomizedDbDishes,
