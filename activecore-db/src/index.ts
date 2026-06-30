@@ -7866,7 +7866,7 @@ app.delete('/api/equipment/:id', authenticateToken, requireAdmin, async (req: Au
 });
 
 // App configuration
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const APP_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:3000').trim().replace(/\/$/, '');
 
 // Helper function to get PayPal access token
 async function getPayPalAccessToken(): Promise<{ accessToken: string; apiBaseUrl: string }> {
