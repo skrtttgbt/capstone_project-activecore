@@ -712,6 +712,10 @@ const PAYPAL_MODE =
 const PAYPAL_API_URL = PAYPAL_MODE === 'live' 
   ? 'https://api.paypal.com/v2'
   : 'https://api.sandbox.paypal.com/v2';
+const PAYPAL_RECEIVER_EMAIL = (process.env.PAYPAL_RECEIVER_EMAIL || '').trim();
+const PAYPAL_CURRENCY = (process.env.PAYPAL_CURRENCY || (process.env.NODE_ENV === 'production' ? 'USD' : 'PHP'))
+  .trim()
+  .toUpperCase();
 
 // use env-driven model name so it's easy to switch
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
@@ -8121,20 +8125,27 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
                            normalizedPlan === 'quarterly' ? 'Quarterly Membership' :
                            'Annual Membership';
     const frontendBaseUrl = resolveFrontendBaseUrl(req);
+    const purchaseUnits: any[] = [{
+      amount: {
+        currency_code: PAYPAL_CURRENCY,
+        value: parsedAmount.toFixed(2)
+      },
+      description: planDescription,
+      custom_id: `${userId}|${normalizedPlan}` // Store userId and plan in custom_id
+    }];
+
+    if (PAYPAL_RECEIVER_EMAIL) {
+      purchaseUnits[0].payee = {
+        email_address: PAYPAL_RECEIVER_EMAIL,
+      };
+    }
 
     const payload = {
       intent: 'CAPTURE',
       payer: {
         email_address: `user_${userId}@activecore.test`
       },
-      purchase_units: [{
-        amount: {
-          currency_code: 'PHP',
-          value: parsedAmount.toFixed(2)
-        },
-        description: planDescription,
-        custom_id: `${userId}|${normalizedPlan}` // Store userId and plan in custom_id
-      }],
+      purchase_units: purchaseUnits,
       application_context: {
         brand_name: 'ActiveCore Fitness',
         landing_page: 'BILLING',
@@ -8194,8 +8205,11 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
     }
     
     // Safe error message for client
+    const paypalErrorCode = err.response?.data?.details?.[0]?.issue || '';
     const clientMessage = errorCode === 401 || errorCode === 403
       ? 'Payment service authentication failed. Please contact support.'
+      : errorCode === 422 && paypalErrorCode === 'PAYEE_ACCOUNT_RESTRICTED'
+      ? 'This PayPal merchant account cannot receive payments right now. Please contact support or try another payment method.'
       : errorCode >= 400 && errorCode < 500
       ? 'Invalid payment request. Please check your details and try again.'
       : 'Payment service temporarily unavailable. Please try again later.';
