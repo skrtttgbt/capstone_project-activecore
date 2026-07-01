@@ -8189,23 +8189,28 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
   } catch (err: any) {
     const isDevelopment = process.env.NODE_ENV === 'development';
     const errorCode = err.response?.status || 500;
+    const paypalErrorCode = err.response?.data?.details?.[0]?.issue || err.response?.data?.error || '';
+    const paypalErrorDescription = err.response?.data?.details?.[0]?.description || err.response?.data?.error_description || '';
     
     if (isProduction) {
       console.error('🔴 [PayPal] Error occurred:', {
         message: err.message,
         status: err.response?.status,
+        error: paypalErrorCode,
+        description: paypalErrorDescription,
       });
     } else {
       console.error('🔴 [PayPal] Error occurred:', {
         message: err.message,
         status: err.response?.status,
         data: err.response?.data,
-        isDevelopment
+        isDevelopment,
+        error: paypalErrorCode,
+        description: paypalErrorDescription,
       });
     }
     
     // Safe error message for client
-    const paypalErrorCode = err.response?.data?.details?.[0]?.issue || '';
     const clientMessage = errorCode === 401 || errorCode === 403
       ? 'Payment service authentication failed. Please contact support.'
       : errorCode === 422 && paypalErrorCode === 'PAYEE_ACCOUNT_RESTRICTED'
