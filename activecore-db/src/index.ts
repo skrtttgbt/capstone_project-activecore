@@ -704,14 +704,22 @@ if (process.env.NODE_ENV === 'development') {
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || '';
 const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || '';
 const normalizedPayPalMode = (process.env.PAYPAL_MODE || '').trim().toLowerCase();
-const PAYPAL_MODE =
-  normalizedPayPalMode === 'live' ||
-  (normalizedPayPalMode !== 'sandbox' && process.env.NODE_ENV === 'production')
-    ? 'live'
+const PAYPAL_MODE = normalizedPayPalMode === 'live'
+  ? 'live'
+  : normalizedPayPalMode === 'sandbox'
+    ? 'sandbox'
     : 'sandbox';
+if (!process.env.PAYPAL_MODE) {
+  console.warn('⚠️ PAYPAL_MODE is not set. Defaulting to sandbox. Set PAYPAL_MODE=sandbox for testing or PAYPAL_MODE=live for production.');
+}
 const PAYPAL_API_URL = PAYPAL_MODE === 'live' 
   ? 'https://api.paypal.com/v2'
   : 'https://api.sandbox.paypal.com/v2';
+const PAYPAL_RECEIVER_EMAIL = (process.env.PAYPAL_RECEIVER_EMAIL || '').trim();
+const PAYPAL_USE_RECEIVER_EMAIL = String(process.env.PAYPAL_USE_RECEIVER_EMAIL || '').toLowerCase() === 'true';
+const PAYPAL_CURRENCY = (process.env.PAYPAL_CURRENCY || (process.env.NODE_ENV === 'production' ? 'USD' : 'PHP'))
+  .trim()
+  .toUpperCase();
 
 // use env-driven model name so it's easy to switch
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
@@ -7050,7 +7058,7 @@ app.get('/api/user/settings/absence-reminder', authenticateToken, async (req: Au
     if (!row) {
       return res.json({
         success: true,
-        settings: { enabled: true, thresholdDays: 3, reminderHour: 8, reminderMinute: 0 },
+        settings: { enabled: true, thresholdDays: 1, reminderHour: 8, reminderMinute: 0 },
       });
     }
 
@@ -7072,7 +7080,7 @@ app.post('/api/user/settings/absence-reminder', authenticateToken, async (req: A
   try {
     const userId = req.user!.id;
     const enabled = Boolean(req.body?.enabled);
-    const thresholdDays = Math.max(1, Number(req.body?.thresholdDays ?? 3));
+    const thresholdDays = Math.max(1, Number(req.body?.thresholdDays ?? 1));
     const reminderHour = Math.min(23, Math.max(0, Number(req.body?.reminderHour ?? 8)));
     const reminderMinute = Math.min(59, Math.max(0, Number(req.body?.reminderMinute ?? 0)));
 
@@ -7572,7 +7580,7 @@ function isValidEmail(email?: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
-async function notifyInactiveMembers(thresholdDays = 3) {
+async function notifyInactiveMembers(thresholdDays = 1) {
   try {
     if (!transporter || !smtpReady) {
       return { success: false, message: 'SMTP not configured or credentials invalid' };
@@ -7645,7 +7653,7 @@ async function notifyInactiveMembers(thresholdDays = 3) {
 // Admin endpoint: trigger notifications manually
 app.post('/api/admin/attendance/notify-inactive', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const { thresholdDays = 3 } = req.body;
+    const { thresholdDays = 1 } = req.body;
     const result = await notifyInactiveMembers(Number(thresholdDays));
     res.json(result);
   } catch (err: any) {
@@ -7673,7 +7681,7 @@ app.post('/api/admin/users/:id/reactivate', authenticateToken, requireAdmin, asy
 });
 
 // Schedule daily run (once every 24h) at server start if desired
-const NOTIFY_THRESHOLD_DAYS = Number(process.env.INACTIVE_NOTIFY_DAYS) || 3;
+const NOTIFY_THRESHOLD_DAYS = Number(process.env.INACTIVE_NOTIFY_DAYS) || 1;
 const DAILY_MS = 24 * 60 * 60 * 1000;
 // Run once at startup
 setTimeout(() => {
@@ -7917,7 +7925,36 @@ app.delete('/api/equipment/:id', authenticateToken, requireAdmin, async (req: Au
 });
 
 // App configuration
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+function resolveFrontendBaseUrl(req?: Request): string {
+  const envValue = (process.env.APP_URL || process.env.FRONTEND_URL || '').trim().replace(/\/$/, '');
+  if (envValue) return envValue;
+
+  const originHeader = req?.headers?.origin;
+  if (typeof originHeader === 'string' && originHeader.trim()) {
+    return originHeader.trim().replace(/\/$/, '');
+  }
+
+  const refererHeader = req?.headers?.referer;
+  if (typeof refererHeader === 'string' && refererHeader.trim()) {
+    try {
+      return new URL(refererHeader).origin;
+    } catch {
+      // ignore invalid referer
+    }
+  }
+
+  const forwardedHost = req?.headers?.['x-forwarded-host'];
+  if (typeof forwardedHost === 'string' && forwardedHost.trim()) {
+    const host = forwardedHost.split(',')[0].trim();
+    const proto = req?.headers?.['x-forwarded-proto'];
+    if (typeof proto === 'string' && proto.trim()) {
+      return `${proto.split(',')[0].trim()}://${host}`.replace(/\/$/, '');
+    }
+    return `https://${host}`.replace(/\/$/, '');
+  }
+
+  return 'http://localhost:3000';
+}
 
 // Helper function to get PayPal access token
 async function getPayPalAccessToken(): Promise<{ accessToken: string; apiBaseUrl: string }> {
@@ -8142,26 +8179,37 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
     const planDescription = normalizedPlan === 'monthly' ? 'Monthly Membership' : 
                            normalizedPlan === 'quarterly' ? 'Quarterly Membership' :
                            'Annual Membership';
+    const frontendBaseUrl = resolveFrontendBaseUrl(req);
+    const purchaseUnits: any[] = [{
+      amount: {
+        currency_code: PAYPAL_CURRENCY,
+        value: parsedAmount.toFixed(2)
+      },
+      description: planDescription,
+      custom_id: `${userId}|${normalizedPlan}` // Store userId and plan in custom_id
+    }];
+
+    if (PAYPAL_USE_RECEIVER_EMAIL && PAYPAL_RECEIVER_EMAIL && PAYPAL_RECEIVER_EMAIL.includes('@')) {
+      purchaseUnits[0].payee = {
+        email_address: PAYPAL_RECEIVER_EMAIL,
+      };
+      debugLog('🔵 [PayPal] Using explicit payee email from env override');
+    } else {
+      debugLog('🔵 [PayPal] No explicit payee email override enabled; using merchant account from PayPal credentials');
+    }
 
     const payload = {
       intent: 'CAPTURE',
       payer: {
         email_address: `user_${userId}@activecore.test`
       },
-      purchase_units: [{
-        amount: {
-          currency_code: 'PHP',
-          value: parsedAmount.toFixed(2)
-        },
-        description: planDescription,
-        custom_id: `${userId}|${normalizedPlan}` // Store userId and plan in custom_id
-      }],
+      purchase_units: purchaseUnits,
       application_context: {
         brand_name: 'ActiveCore Fitness',
         landing_page: 'BILLING',
         user_action: 'PAY_NOW',
-        return_url: `${APP_URL}/member/payment/success`,
-        cancel_url: `${APP_URL}/member/payment/failed`
+        return_url: `${frontendBaseUrl}/member/payment/success`,
+        cancel_url: `${frontendBaseUrl}/member/payment/failed`
       }
     };
 
@@ -8199,24 +8247,32 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
   } catch (err: any) {
     const isDevelopment = process.env.NODE_ENV === 'development';
     const errorCode = err.response?.status || 500;
+    const paypalErrorCode = err.response?.data?.details?.[0]?.issue || err.response?.data?.error || '';
+    const paypalErrorDescription = err.response?.data?.details?.[0]?.description || err.response?.data?.error_description || '';
     
     if (isProduction) {
       console.error('🔴 [PayPal] Error occurred:', {
         message: err.message,
         status: err.response?.status,
+        error: paypalErrorCode,
+        description: paypalErrorDescription,
       });
     } else {
       console.error('🔴 [PayPal] Error occurred:', {
         message: err.message,
         status: err.response?.status,
         data: err.response?.data,
-        isDevelopment
+        isDevelopment,
+        error: paypalErrorCode,
+        description: paypalErrorDescription,
       });
     }
     
     // Safe error message for client
     const clientMessage = errorCode === 401 || errorCode === 403
       ? 'Payment service authentication failed. Please contact support.'
+      : errorCode === 422 && paypalErrorCode === 'PAYEE_ACCOUNT_RESTRICTED'
+      ? 'Your PayPal merchant account is currently not eligible to receive payments. Please verify the business account status or remove the receiver-email override.'
       : errorCode >= 400 && errorCode < 500
       ? 'Invalid payment request. Please check your details and try again.'
       : 'Payment service temporarily unavailable. Please try again later.';
