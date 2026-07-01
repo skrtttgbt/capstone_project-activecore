@@ -716,6 +716,7 @@ const PAYPAL_API_URL = PAYPAL_MODE === 'live'
   ? 'https://api.paypal.com/v2'
   : 'https://api.sandbox.paypal.com/v2';
 const PAYPAL_RECEIVER_EMAIL = (process.env.PAYPAL_RECEIVER_EMAIL || '').trim();
+const PAYPAL_USE_RECEIVER_EMAIL = String(process.env.PAYPAL_USE_RECEIVER_EMAIL || '').toLowerCase() === 'true';
 const PAYPAL_CURRENCY = (process.env.PAYPAL_CURRENCY || (process.env.NODE_ENV === 'production' ? 'USD' : 'PHP'))
   .trim()
   .toUpperCase();
@@ -7006,7 +7007,7 @@ app.get('/api/user/settings/absence-reminder', authenticateToken, async (req: Au
     if (!row) {
       return res.json({
         success: true,
-        settings: { enabled: true, thresholdDays: 3, reminderHour: 8, reminderMinute: 0 },
+        settings: { enabled: true, thresholdDays: 1, reminderHour: 8, reminderMinute: 0 },
       });
     }
 
@@ -7028,7 +7029,7 @@ app.post('/api/user/settings/absence-reminder', authenticateToken, async (req: A
   try {
     const userId = req.user!.id;
     const enabled = Boolean(req.body?.enabled);
-    const thresholdDays = Math.max(1, Number(req.body?.thresholdDays ?? 3));
+    const thresholdDays = Math.max(1, Number(req.body?.thresholdDays ?? 1));
     const reminderHour = Math.min(23, Math.max(0, Number(req.body?.reminderHour ?? 8)));
     const reminderMinute = Math.min(59, Math.max(0, Number(req.body?.reminderMinute ?? 0)));
 
@@ -7528,7 +7529,7 @@ function isValidEmail(email?: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
-async function notifyInactiveMembers(thresholdDays = 3) {
+async function notifyInactiveMembers(thresholdDays = 1) {
   try {
     if (!transporter || !smtpReady) {
       return { success: false, message: 'SMTP not configured or credentials invalid' };
@@ -7601,7 +7602,7 @@ async function notifyInactiveMembers(thresholdDays = 3) {
 // Admin endpoint: trigger notifications manually
 app.post('/api/admin/attendance/notify-inactive', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const { thresholdDays = 3 } = req.body;
+    const { thresholdDays = 1 } = req.body;
     const result = await notifyInactiveMembers(Number(thresholdDays));
     res.json(result);
   } catch (err: any) {
@@ -7629,7 +7630,7 @@ app.post('/api/admin/users/:id/reactivate', authenticateToken, requireAdmin, asy
 });
 
 // Schedule daily run (once every 24h) at server start if desired
-const NOTIFY_THRESHOLD_DAYS = Number(process.env.INACTIVE_NOTIFY_DAYS) || 3;
+const NOTIFY_THRESHOLD_DAYS = Number(process.env.INACTIVE_NOTIFY_DAYS) || 1;
 const DAILY_MS = 24 * 60 * 60 * 1000;
 // Run once at startup
 setTimeout(() => {
@@ -8137,10 +8138,13 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
       custom_id: `${userId}|${normalizedPlan}` // Store userId and plan in custom_id
     }];
 
-    if (PAYPAL_RECEIVER_EMAIL && PAYPAL_RECEIVER_EMAIL.includes('@')) {
+    if (PAYPAL_USE_RECEIVER_EMAIL && PAYPAL_RECEIVER_EMAIL && PAYPAL_RECEIVER_EMAIL.includes('@')) {
       purchaseUnits[0].payee = {
         email_address: PAYPAL_RECEIVER_EMAIL,
       };
+      debugLog('🔵 [PayPal] Using explicit payee email from env override');
+    } else {
+      debugLog('🔵 [PayPal] No explicit payee email override enabled; using merchant account from PayPal credentials');
     }
 
     const payload = {
@@ -8217,7 +8221,7 @@ app.post('/api/payments/paypal/create-order', paymentLimiter, authenticateToken,
     const clientMessage = errorCode === 401 || errorCode === 403
       ? 'Payment service authentication failed. Please contact support.'
       : errorCode === 422 && paypalErrorCode === 'PAYEE_ACCOUNT_RESTRICTED'
-      ? 'This PayPal merchant account cannot receive payments right now. Please contact support or try another payment method.'
+      ? 'Your PayPal merchant account is currently not eligible to receive payments. Please verify the business account status or remove the receiver-email override.'
       : errorCode >= 400 && errorCode < 500
       ? 'Invalid payment request. Please check your details and try again.'
       : 'Payment service temporarily unavailable. Please try again later.';
