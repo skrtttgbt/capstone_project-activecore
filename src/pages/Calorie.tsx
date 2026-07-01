@@ -178,12 +178,18 @@ const Calorie: React.FC = () => {
         label: selectedGoal.label,
         bmr: summary.bmr,
         maintenanceCalories: summary.maintenanceCalories,
+        age: Number(age),
+        weightKg: Number(weight),
+        gender,
       }),
     );
 
     const query = new URLSearchParams({
       recommendedCalories: String(selectedGoal.targetIntake),
       recommendedGoal: mealPlannerGoal,
+      age: String(Number(age)),
+      weightKg: String(Number(weight)),
+      gender,
     });
 
     history.push(`/member/meal-planner?${query.toString()}`);
