@@ -143,13 +143,15 @@ const AdminPendingPayments: React.FC = () => {
       });
 
       if (response.ok) {
+        const result = await response.json().catch(() => ({}));
         presentToast({
-          message: 'Payment rejected',
+          message: result?.message || 'Payment rejected',
           duration: 3000,
           color: 'warning',
         });
         setShowRejectAlert(false);
         setSelectedPayment(null);
+        setPayments((current) => current.filter((payment) => payment.id !== selectedPayment.id));
         await loadPendingPayments();
       } else {
         let message = 'Failed to reject payment';
