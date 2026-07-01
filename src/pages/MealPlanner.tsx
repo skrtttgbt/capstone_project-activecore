@@ -701,7 +701,7 @@ const MealPlanner: React.FC = () => {
             HEALTH_CONDITIONS,
           ),
         );
-        setCulturalContext(String(dietaryPrefs.cultural || "filipino"));
+        setCulturalContext(String("filipino"));
         setReligiousRestriction(String(dietaryPrefs.religious || ""));
         setFoodPreferences(
           normalizeToKnownValues(
@@ -1070,23 +1070,17 @@ const MealPlanner: React.FC = () => {
   useEffect(() => {
     let active = true;
 
-    const initializeMealPlanner = async () => {
-      const token = getStoredToken();
+    const normalizeTransferredSex = (value: unknown): string => {
+      const normalized = String(value ?? "")
+        .trim()
+        .toLowerCase();
 
-      if (!token) {
-        console.warn("Meal Planner opened without a stored token.");
-        return;
-      }
+      if (normalized === "male" || normalized === "m") return "male";
+      if (normalized === "female" || normalized === "f") return "female";
+      return "";
+    };
 
-      await Promise.all([loadPreferences(token), loadSavedPlans(token)]);
-
-      if (!active) {
-        return;
-      }
-
-      // Frontend-only bridge from Calorie Calculator.
-      // Apply it after stored preferences load so the recommended calories
-      // become the visible Meal Planner target without writing to the backend.
+    const applyCalorieCalculatorTransfer = () => {
       try {
         const params = new URLSearchParams(window.location.search);
         const storedRaw = sessionStorage.getItem(
@@ -1095,7 +1089,7 @@ const MealPlanner: React.FC = () => {
         const stored = storedRaw ? JSON.parse(storedRaw) : null;
 
         const recommendedCalories = Number(
-          params.get("recommendedCalories") || stored?.calories || 0,
+          params.get("recommendedCalories") ?? stored?.calories ?? 0,
         );
         if (
           Number.isFinite(recommendedCalories) &&
@@ -1105,16 +1099,61 @@ const MealPlanner: React.FC = () => {
           setCalorieTarget(Math.round(recommendedCalories));
         }
 
+        const transferredAge = Number(
+          params.get("age") ?? stored?.age ?? 0,
+        );
+        if (
+          Number.isFinite(transferredAge) &&
+          transferredAge >= 10 &&
+          transferredAge <= 100
+        ) {
+          setAge(Math.round(transferredAge));
+        }
+
+        const transferredWeightKg = Number(
+          params.get("weightKg") ??
+            params.get("weight") ??
+            stored?.weightKg ??
+            stored?.weight ??
+            0,
+        );
+        if (
+          Number.isFinite(transferredWeightKg) &&
+          transferredWeightKg >= 25 &&
+          transferredWeightKg <= 250
+        ) {
+          setWeightKg(Number(transferredWeightKg.toFixed(2)));
+        }
+
+        const transferredSex = normalizeTransferredSex(
+          params.get("gender") ??
+            params.get("sex") ??
+            stored?.gender ??
+            stored?.sex,
+        );
+        if (transferredSex) {
+          setSex(transferredSex);
+        }
+
         if (storedRaw) {
           sessionStorage.removeItem("mealPlannerCalorieRecommendation");
         }
 
-        if (
-          params.has("recommendedCalories") ||
-          params.has("recommendedGoal")
-        ) {
-          params.delete("recommendedCalories");
-          params.delete("recommendedGoal");
+        const calculatorParams = [
+          "recommendedCalories",
+          "recommendedGoal",
+          "age",
+          "weightKg",
+          "weight",
+          "gender",
+          "sex",
+        ];
+        const hasCalculatorParams = calculatorParams.some((key) =>
+          params.has(key),
+        );
+
+        if (hasCalculatorParams) {
+          calculatorParams.forEach((key) => params.delete(key));
 
           const cleanedQuery = params.toString();
           window.history.replaceState(
@@ -1125,10 +1164,28 @@ const MealPlanner: React.FC = () => {
         }
       } catch (error) {
         console.warn(
-          "Could not apply calorie calculator recommendation:",
+          "Could not apply calorie calculator profile transfer:",
           error,
         );
       }
+    };
+
+    const initializeMealPlanner = async () => {
+      const token = getStoredToken();
+
+      if (token) {
+        // Load saved preferences first, then let the Calorie Calculator values
+        // override age, sex, weight, and calorie target for this visit.
+        await Promise.all([loadPreferences(token), loadSavedPlans(token)]);
+      } else {
+        console.warn("Meal Planner opened without a stored token.");
+      }
+
+      if (!active) {
+        return;
+      }
+
+      applyCalorieCalculatorTransfer();
     };
 
     void initializeMealPlanner();
@@ -2996,10 +3053,10 @@ const MealPlanner: React.FC = () => {
                     </IonLabel>
                   </div>
 
-                  <div className="form-group">
+                  {/* <div className="form-group">
                     <IonItem className="custom-item">
                       <IonLabel position="stacked">Cultural Context</IonLabel>
-                      <IonSelect
+                       <IonSelect
                         value={culturalContext}
                         onIonChange={(e) =>
                           setCulturalContext(e.detail.value || "filipino")
@@ -3010,9 +3067,9 @@ const MealPlanner: React.FC = () => {
                             {opt.label}
                           </IonSelectOption>
                         ))}
-                      </IonSelect>
+                      </IonSelect> 
                     </IonItem>
-                  </div>
+                  </div> */}
 
                   <div className="form-group">
                     <IonItem className="custom-item">
