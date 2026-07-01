@@ -5110,6 +5110,15 @@ app.post('/api/admin/payments/:id/reject', authenticateToken, requireAdmin, asyn
       return res.status(400).json({ success: false, message: 'Invalid payment id' });
     }
 
+    const [existingRows] = await pool.query<any>(
+      `SELECT id FROM payments WHERE id = ? LIMIT 1`,
+      [paymentId]
+    );
+
+    if (!Array.isArray(existingRows) || existingRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Payment not found' });
+    }
+
     const hasPaymentNotes = await dbColumnExists('payments', 'notes');
 
     const [result] = hasPaymentNotes
@@ -5130,7 +5139,7 @@ app.post('/api/admin/payments/:id/reject', authenticateToken, requireAdmin, asyn
           [paymentId]
         );
 
-    const affectedRows = Number((result as any)?.affectedRows ?? (result as any)?.rowCount ?? 0);
+    const affectedRows = Number((result as any)?.affectedRows ?? (result as any)?.rowCount ?? (result as any)?.changedRows ?? 0);
     if (!affectedRows) {
       return res.status(404).json({ success: false, message: 'Payment not found' });
     }
