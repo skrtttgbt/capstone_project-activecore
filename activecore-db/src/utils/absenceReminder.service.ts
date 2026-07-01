@@ -38,22 +38,24 @@ export const getAbsentUsers = async (thresholdDays: number = 3): Promise<AbsentU
        ORDER BY u.created_at DESC`
     );
 
-    // Calculate days since last attendance in JavaScript
+    // Trigger immediately for members who have never checked in, otherwise activate after the configured threshold.
     const absentUsers = rows
       .map((row: any) => {
+        const hasNoAttendance = !row.lastAttendanceDate;
         const lastDate = row.lastAttendanceDate ? new Date(row.lastAttendanceDate) : new Date(row.created_at);
         const today = new Date();
         const daysSince = Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
 
         return {
           ...row,
-          daysSinceLastAttendance: daysSince
+          daysSinceLastAttendance: daysSince,
+          shouldSendReminder: hasNoAttendance || daysSince >= thresholdDays,
         };
       })
-      .filter((user: any) => user.daysSinceLastAttendance >= thresholdDays)
+      .filter((user: any) => user.shouldSendReminder)
       .sort((a: any, b: any) => b.daysSinceLastAttendance - a.daysSinceLastAttendance);
 
-    return rows as AbsentUser[];
+    return absentUsers as AbsentUser[];
   } catch (error) {
     logError('Error fetching absent users:', error);
     return [];

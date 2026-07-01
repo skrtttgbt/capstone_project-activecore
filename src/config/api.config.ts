@@ -8,18 +8,30 @@ export const API_CONFIG = {
   // Base URL for backend API calls
   BASE_URL: (() => {
     const fromEnv = (process.env.REACT_APP_API_URL || '').trim();
-    if (fromEnv) return fromEnv.replace(/\/$/, '');
-
     const nodeEnv = process.env.NODE_ENV;
 
-    // In production (and generally any non-dev environment), never fall back to localhost.
-    // Use same-origin /api so Vercel (or any reverse proxy) can forward requests.
+    if (fromEnv) {
+      const normalized = fromEnv.replace(/\/$/, '');
+
+      if (/^https?:\/\//i.test(normalized)) {
+        try {
+          const url = new URL(normalized);
+          const pathname = url.pathname && url.pathname !== '/' ? url.pathname : '';
+          const hasApiSuffix = pathname.endsWith('/api');
+          const normalizedPath = hasApiSuffix ? pathname : `${pathname}/api`;
+          return `${url.origin}${normalizedPath}`;
+        } catch {
+          return normalized;
+        }
+      }
+
+      return normalized;
+    }
+
+    // In production, prefer the direct Render backend URL when available.
+    // If you still want to use Vercel's /api proxy, set REACT_APP_API_URL to /api and rebuild.
     if (nodeEnv !== 'development') {
-      console.warn(
-        '[API_CONFIG] REACT_APP_API_URL is not set. Falling back to same-origin /api. '
-          + 'If your backend is on a different domain, set REACT_APP_API_URL and rebuild/redeploy.'
-      );
-      return '/api';
+      return 'https://activecore.onrender.com/api';
     }
 
     // Development fallback only.

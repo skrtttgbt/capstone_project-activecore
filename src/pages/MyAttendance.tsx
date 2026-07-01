@@ -27,7 +27,6 @@ import {
   trophy,
   calendar,
   timeOutline,
-  location,
   gift,
   calendarOutline,
   flame,
@@ -307,8 +306,8 @@ const MyAttendance: React.FC = () => {
                             <span>{record.checkInTime ? formatLocalTime(record.checkInTime) : ''}</span>
                           </div>
                           <div className="detail-item">
-                            <IonIcon icon={location} />
-                            <span>{record.location}</span>
+                            <IonIcon icon={calendarOutline} />
+                            <span>{record.checkInTime ? formatLocalDate(record.checkInTime) : ''}</span>
                           </div>
                         </div>
                         <IonBadge color="success" className="status-badge">
