@@ -27,14 +27,14 @@ import {
   refreshOutline,
   peopleOutline,
   timeOutline,
-  locationOutline,
+  calendarOutline,
   warningOutline,
 } from "ionicons/icons";
 import { QRCodeSVG } from "qrcode.react";
 import "./AdminAttendance.css";
 
 import { API_CONFIG } from "../config/api.config";
-import { formatLocalTime } from "../utils/dateTime";
+import { formatLocalDate, formatLocalTime } from "../utils/dateTime";
 
 interface AttendanceRecord {
   id: number;
@@ -290,7 +290,7 @@ const AdminAttendance: React.FC = () => {
                             <th>Member</th>
                             <th>Username</th>
                             <th>Check-in</th>
-                            <th>Location</th>
+                            <th>Date</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -315,8 +315,8 @@ const AdminAttendance: React.FC = () => {
                               </td>
                               <td>
                                 <div className="location-cell">
-                                  <IonIcon icon={locationOutline} />
-                                  <span>{record.location}</span>
+                                  <IonIcon icon={calendarOutline} />
+                                  <span>{record.checkInTime ? formatLocalDate(record.checkInTime) : ""}</span>
                                 </div>
                               </td>
                             </tr>
@@ -350,8 +350,8 @@ const AdminAttendance: React.FC = () => {
                                     <span>{record.checkInTime ? formatLocalTime(record.checkInTime) : ''}</span>
                                   </div>
                                   <div className="detail-item">
-                                    <IonIcon icon={locationOutline} />
-                                    <span>{record.location}</span>
+                                    <IonIcon icon={calendarOutline} />
+                                    <span>{record.checkInTime ? formatLocalDate(record.checkInTime) : ""}</span>
                                   </div>
                                 </div>
                               </IonCardContent>
