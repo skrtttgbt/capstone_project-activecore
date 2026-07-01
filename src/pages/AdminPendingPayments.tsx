@@ -151,9 +151,28 @@ const AdminPendingPayments: React.FC = () => {
         setShowRejectAlert(false);
         setSelectedPayment(null);
         await loadPendingPayments();
+      } else {
+        let message = 'Failed to reject payment';
+        try {
+          const errorData = await response.json();
+          message = errorData?.message || message;
+        } catch {
+          // keep default message
+        }
+
+        presentToast({
+          message: `❌ ${message}`,
+          duration: 3000,
+          color: 'danger',
+        });
       }
     } catch (error) {
       console.error('Error rejecting payment:', error);
+      presentToast({
+        message: '❌ Failed to reject payment',
+        duration: 3000,
+        color: 'danger',
+      });
     }
   };
 

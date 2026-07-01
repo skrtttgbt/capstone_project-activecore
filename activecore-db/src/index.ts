@@ -5130,7 +5130,8 @@ app.post('/api/admin/payments/:id/reject', authenticateToken, requireAdmin, asyn
           [paymentId]
         );
 
-    if (!(result as any)?.affectedRows) {
+    const affectedRows = Number((result as any)?.affectedRows ?? (result as any)?.rowCount ?? 0);
+    if (!affectedRows) {
       return res.status(404).json({ success: false, message: 'Payment not found' });
     }
 
