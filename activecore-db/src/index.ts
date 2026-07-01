@@ -704,11 +704,14 @@ if (process.env.NODE_ENV === 'development') {
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || '';
 const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || '';
 const normalizedPayPalMode = (process.env.PAYPAL_MODE || '').trim().toLowerCase();
-const PAYPAL_MODE =
-  normalizedPayPalMode === 'live' ||
-  (normalizedPayPalMode !== 'sandbox' && process.env.NODE_ENV === 'production')
-    ? 'live'
+const PAYPAL_MODE = normalizedPayPalMode === 'live'
+  ? 'live'
+  : normalizedPayPalMode === 'sandbox'
+    ? 'sandbox'
     : 'sandbox';
+if (!process.env.PAYPAL_MODE) {
+  console.warn('⚠️ PAYPAL_MODE is not set. Defaulting to sandbox. Set PAYPAL_MODE=sandbox for testing or PAYPAL_MODE=live for production.');
+}
 const PAYPAL_API_URL = PAYPAL_MODE === 'live' 
   ? 'https://api.paypal.com/v2'
   : 'https://api.sandbox.paypal.com/v2';
