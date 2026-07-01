@@ -5115,7 +5115,7 @@ app.post('/api/admin/payments/:id/reject', authenticateToken, requireAdmin, asyn
     const [result] = hasPaymentNotes
       ? await pool.query<any>(
           `UPDATE payments
-           SET payment_status = 'rejected',
+           SET payment_status = 'cancelled',
                notes = CASE
                  WHEN COALESCE(notes, '') = '' THEN ?
                  ELSE CONCAT(notes, ' | Rejected: ', ?)
@@ -5125,7 +5125,7 @@ app.post('/api/admin/payments/:id/reject', authenticateToken, requireAdmin, asyn
         )
       : await pool.query<any>(
           `UPDATE payments
-           SET payment_status = 'rejected'
+           SET payment_status = 'cancelled'
            WHERE id = ?`,
           [paymentId]
         );
