@@ -69,7 +69,7 @@ const MyAttendanceContent: React.FC = () => {
         ) : records.length > 0 ? (
           records.map((r) => (
             <li key={r.id}>
-              ✅ {formatLocalDate(r.checkInTime)} {formatLocalTime(r.checkInTime)}
+              📅 {formatLocalDate(r.checkInTime)} · {formatLocalTime(r.checkInTime)}
             </li>
           ))
         ) : legacyAttendanceDays.length > 0 ? (
